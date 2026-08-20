@@ -1,8 +1,8 @@
-# dsh-memory bundle patch: inserts the dual-face plugin row into a profile's
-# layer stack. Applied as a profile bundle layer (the `dsh.bundle.patch`
-# manifest field) over dsh-base; activate with
-# `dsh plugin --profile <name> add dsh-memory` (npm) or
-# `dsh plugin --profile <name> add github:<owner>/<repo>` (monorepo).
+# dsh-global-memory bundle patch: inserts the dual-face plugin row into a
+# profile's layer stack. Applied as a profile bundle layer (the
+# `dsh.bundle.patch` manifest field) over dsh-base; activate with
+# `dsh plugin --profile <name> add dsh-global-memory` (npm) or
+# `dsh plugin --profile <name> add github:xujiping/dsh-plugins` (monorepo).
 #
 # The row is a bare plugin by package name: the node half (exports ".") runs
 # in the host process (memory file routes /api/dsh-memory), and the
@@ -10,4 +10,4 @@
 # (exports "./client") load in the web GUI.
 - insert:
     - id: memory
-      name: 'dsh-memory'
+      name: 'dsh-global-memory'

@@ -7,13 +7,13 @@
 
 | 包 | 功能 | 安装 |
 |---|---|---|
-| `packages/dsh-memory` | 全局记忆：侧边栏「全局记忆」页，直接查看/编辑 `~/.dsh/AGENTS.md` 与 `~/.dsh/memory/*.md` | `dsh plugin --profile <name> add dsh-memory` |
+| `packages/dsh-memory` | 全局记忆：侧边栏「全局记忆」页，直接查看/编辑 `~/.dsh/AGENTS.md` 与 `~/.dsh/memory/*.md` | `dsh plugin --profile <name> add dsh-global-memory` |
 
 ## 安装方式（以 dsh-memory 为例）
 
 ```bash
 # 从 npm（发布后可用）
-dsh plugin --profile web add dsh-memory
+dsh plugin --profile web add dsh-global-memory
 
 # 或从本仓库
 dsh plugin --profile web add github:xujiping/dsh-plugins
