@@ -1,0 +1,27 @@
+{
+  "name": "dsh-memory",
+  "version": "0.1.0",
+  "description": "DSH 全局记忆插件：侧边栏「全局记忆」页，直接查看/编辑 ~/.dsh/AGENTS.md 与 ~/.dsh/memory/*.md。Host 半边注册 /api/dsh-memory 路由（回环限制），client 半边注入侧边栏入口与中心面板。热插拔挂载，不改 DSH 源码。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "license": "MIT",
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ]
+}
