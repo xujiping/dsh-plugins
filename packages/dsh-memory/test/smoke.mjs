@@ -1,13 +1,25 @@
 /**
  * Host-half smoke test: registers the /api/dsh-memory routes on a stub
- * webServer, then drives the handlers with fake req/res pairs against the
- * REAL ~/.dsh files (read-only paths) plus a sandboxed write of a temp key.
- * Run: node test/smoke.mjs
+ * webServer, then drives the handlers with fake req/res pairs.
+ *
+ * Fully sandboxed: a temp HOME with fixture files (AGENTS.md + memory/*.md)
+ * is created before lib/index.js loads (its homedir() resolves at module
+ * load), so the test never touches real ~/.dsh data and runs anywhere (CI
+ * included). Run: node test/smoke.mjs
  */
 import assert from 'node:assert/strict'
-import { readFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
+
+// --- sandbox HOME before importing the module under test
+const sandboxHome = await mkdtemp(join(tmpdir(), 'dsh-memory-smoke-'))
+const sandboxDsh = join(sandboxHome, '.dsh')
+const memoryDir = join(sandboxDsh, 'memory')
+await mkdir(memoryDir, { recursive: true })
+await writeFile(join(sandboxDsh, 'AGENTS.md'), '# 全局用户指令\n\n- 测试 fixture\n', 'utf8')
+await writeFile(join(memoryDir, 'prefs.md'), '# prefs\n\n- fixture\n', 'utf8')
+process.env.HOME = sandboxHome
 
 const registered = []
 const ctx = {
@@ -101,21 +113,16 @@ for (const key of ['../AGENTS.md', 'a/b.md', '.hidden.md', 'no-extension', '__gl
   assert.equal(r.status, 400, 'key should be rejected: ' + key)
 }
 
-// --- write roundtrip on a temp key, then restore
-const TEMP_KEY = 'smoke-test.md'
-const TEMP_PATH = join(homedir(), '.dsh', 'memory', TEMP_KEY)
-try {
+// --- write roundtrip on a temp key
+{
   const marker = '# smoke ' + Date.now() + '\n'
   const r = res()
-  await fileRoute.handler(req('PUT', '/api/dsh-memory/file', { key: TEMP_KEY, content: marker }), r)
+  await fileRoute.handler(req('PUT', '/api/dsh-memory/file', { key: 'smoke-test.md', content: marker }), r)
   assert.equal(r.status, 200, r.body)
-  assert.equal(await readFile(TEMP_PATH, 'utf8'), marker)
   const r2 = res()
-  await fileRoute.handler(req('GET', '/api/dsh-memory/file?key=' + TEMP_KEY), r2)
+  await fileRoute.handler(req('GET', '/api/dsh-memory/file?key=smoke-test.md'), r2)
   assert.equal(JSON.parse(r2.body).content, marker)
   console.log('write roundtrip ok')
-} finally {
-  await rm(TEMP_PATH, { force: true })
 }
 
 // --- bad bodies rejected
@@ -128,4 +135,6 @@ try {
   assert.equal(r2.status, 400)
 }
 
+// --- cleanup sandbox
+await rm(sandboxHome, { recursive: true, force: true })
 console.log('ALL SMOKE TESTS PASSED')
