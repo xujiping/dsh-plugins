@@ -1,0 +1,24 @@
+# dsh-agent-terminal bundle patch: inserts the dual-face plugin row into the
+# profile roster. The node half (exports ".") runs in the host process (PTY
+# session registry, /api/dsh-agent-terminal routes, terminal WebSocket
+# upgrade); the `dsh.client` declaration in package.json makes the browser
+# half (exports "./client", served at /plugins/agent-terminal/client.js)
+# load in the web GUI.
+#
+# Optional config (commented example):
+# - id: agent-terminal
+#   name: 'dsh-agent-terminal'
+#   config:
+#     agents:
+#       - id: claude-code
+#         label: Claude Code
+#         command: claude
+#         args: []
+#         # cwd: ~/work
+#       - id: hermes
+#         label: Hermes
+#         command: hermes
+#         args: []
+- insert:
+    - id: agent-terminal
+      name: 'dsh-agent-terminal'

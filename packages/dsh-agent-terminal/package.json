@@ -1,0 +1,33 @@
+{
+  "name": "dsh-agent-terminal",
+  "description": "Agent terminal for the DSH web GUI: sidebar entry + center panel that runs real external agent CLIs (claude code, hermes, ...) interactively inside a local PTY, rendered with xterm.js. 100% fidelity — the page IS the agent's own TUI. Sessions survive tab switches / panel close (host-side scrollback replay on re-attach), loopback-fenced REST + WebSocket routes.",
+  "version": "0.1.1",
+  "type": "module",
+  "main": "lib/index.js",
+  "scripts": {
+    "build:client": "node scripts/build-client.mjs",
+    "test": "node test/smoke.mjs"
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "license": "MIT"
+}
