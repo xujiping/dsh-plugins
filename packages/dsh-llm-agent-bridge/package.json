@@ -1,0 +1,44 @@
+{
+  "name": "dsh-llm-agent-bridge",
+  "version": "0.1.2",
+  "description": "DSH LLM 适配器桥接插件：把对话框的模型路由接到本机外部智能体 CLI（claude code 的 stream-json、hermes 的 one-shot 等），在原对话框中直接与外部 agent 对话。",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "llm",
+    "claude-code",
+    "hermes",
+    "agent-bridge"
+  ],
+  "author": "xujiping",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xujiping/dsh-plugins.git",
+    "directory": "packages/dsh-llm-agent-bridge"
+  },
+  "homepage": "https://github.com/xujiping/dsh-plugins/tree/main/packages/dsh-llm-agent-bridge",
+  "bugs": {
+    "url": "https://github.com/xujiping/dsh-plugins/issues"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT",
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ]
+}

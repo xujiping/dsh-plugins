@@ -8,6 +8,13 @@
 | 包 | 功能 | 安装 |
 |---|---|---|
 | `packages/dsh-memory` | 全局记忆：侧边栏「全局记忆」页，直接查看/编辑 `~/.dsh/AGENTS.md` 与 `~/.dsh/memory/*.md` | `dsh plugin --profile <name> add dsh-global-memory` |
+| `packages/dsh-llm-agent-bridge` | LLM 适配器桥接：把对话框的模型路由接到本机外部 agent CLI（claude code 的 stream-json、hermes 的 one-shot 等），在原对话框中直接与外部 agent 对话 | `dsh plugin --profile <name> add link:~/AiProjects/dsh-plugins/packages/dsh-llm-agent-bridge` |
+
+```
+packages/
+  dsh-memory/              全局记忆插件（host 半边 lib/index.js + client 半边 lib/client.js）
+  dsh-llm-agent-bridge/    LLM 适配器桥接（host 半边，无 client；接入外部 agent CLI）
+```
 
 ## 安装方式（以 dsh-memory 为例）
 
@@ -25,12 +32,11 @@ dsh plugin --profile web add link:~/AiProjects/dsh-plugins/packages/dsh-memory
 `--profile` 必填（`dsh plugin` 转发到 pnpm 按 profile 安装），`web` 换成你的实际
 profile 名。装完重启 `dsh web`（或重载 profile）生效。
 
-## 结构
-
-```
-packages/
-  dsh-memory/  全局记忆插件（host 半边 lib/index.js + client 半边 lib/client.js）
-```
+> 注意：GUI（Desktop）实际用的是 `desktop` profile。若 GUI 的 pnpm store 版本与
+> `dsh plugin` 内置 pnpm 不一致导致 `ERR_PNPM_UNEXPECTED_STORE`，可手动接线
+> （零依赖插件等价于 `link:`）：在 `~/.dsh/profiles/desktop/package.json` 的
+> `dependencies` 加 `"<pkg>": "link:~/AiProjects/dsh-plugins/packages/<pkg>"`、
+> `dsh.profile.bundles` 数组追加包名，并在 `node_modules` 下建软链。
 
 ## 插件包约定
 

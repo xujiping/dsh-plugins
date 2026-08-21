@@ -1,0 +1,24 @@
+# dsh-llm-agent-bridge bundle patch: inserts the LLM adapter bridge plugin
+# into a profile's layer stack. Activate with:
+#   dsh plugin --profile <name> add link:~/AiProjects/dsh-plugins/packages/dsh-llm-agent-bridge
+# Agent routes can be overridden in ~/.dsh/profiles/<name>/cordis.patch.yml:
+#
+# - insert:
+#     - id: llm-agent-bridge
+#       name: 'dsh-llm-agent-bridge'
+#       config:
+#         agents:
+#           - id: claude-code
+#             label: Claude Code
+#             protocol: claude-code
+#             command: claude
+#             cwd: ~/AiProjects
+#           - id: hermes
+#             label: Hermes
+#             protocol: plain
+#             command: hermes
+#             promptVia: arg
+#             extraArgs: ['-z']
+- insert:
+    - id: llm-agent-bridge
+      name: 'dsh-llm-agent-bridge'
