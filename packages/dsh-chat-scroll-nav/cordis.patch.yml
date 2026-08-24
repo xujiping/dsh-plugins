@@ -1,0 +1,12 @@
+# dsh-chat-scroll-nav bundle patch: inserts the plugin into a profile's layer
+# stack. Applied as a profile bundle layer (the `dsh.bundle.patch` manifest
+# field) over dsh-base; activate with `dsh plugin --profile <name> add
+# dsh-chat-scroll-nav` (npm) or the monorepo link path.
+#
+# The row is a bare plugin by package name: the host half (exports ".") is a
+# no-op, and the `dsh.client` declaration in package.json makes the browser
+# half (exports "./client") load in the web GUI, where it injects the
+# conversation quick-nav rail.
+- insert:
+    - id: chat-scroll-nav
+      name: 'dsh-chat-scroll-nav'

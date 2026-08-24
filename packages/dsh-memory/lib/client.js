@@ -9,7 +9,8 @@
  * Failure policy: mount problems are logged, never thrown.
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-memory',
+  // Must match the package name used by DSH's client-module loader.
+  id: 'dsh-global-memory',
   factory: (require) => {
     var module = { exports: {} }
     var exports = module.exports

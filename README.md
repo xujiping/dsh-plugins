@@ -8,6 +8,7 @@
 | 包 | 功能 | 安装 |
 |---|---|---|
 | `packages/dsh-memory` | 全局记忆：侧边栏「全局记忆」页，直接查看/编辑 `~/.dsh/AGENTS.md` 与 `~/.dsh/memory/*.md` | `dsh plugin --profile <name> add dsh-global-memory` |
+| `packages/dsh-chat-scroll-nav` | 对话右侧快速导航条：聊天区右缘竖向迷你导航（类似手机通讯录索引），点/拖即跳转到对应消息，当前消息高亮 | `dsh plugin --profile <name> add dsh-chat-scroll-nav` |
 
 > **已搁置（2026-08-21 起从 desktop profile 卸载）**：`dsh-llm-agent-bridge` 与
 > `dsh-agent-terminal` 两个插件对效果不满意，暂时不用，源码保留在
@@ -17,6 +18,7 @@
 ```
 packages/
   dsh-memory/              全局记忆插件（host 半边 lib/index.js + client 半边 lib/client.js）
+  dsh-chat-scroll-nav/     对话右侧快速导航条（纯 client 半边 lib/client.js；host 半边空实现）
   dsh-llm-agent-bridge/    LLM 适配器桥接（已搁置；host 半边，无 client；接入外部 agent CLI）
   dsh-agent-terminal/      智能体终端（已搁置；host 半边 PTY 注册表 + client 半边 xterm 面板；src/client.ts 构建产物为 lib/client.js）
 ```

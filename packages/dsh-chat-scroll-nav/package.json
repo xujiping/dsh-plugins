@@ -1,0 +1,49 @@
+{
+  "name": "dsh-chat-scroll-nav",
+  "version": "0.1.0",
+  "description": "DSH 对话右侧快速导航条：在聊天区右缘渲染一条竖向迷你导航（类似手机通讯录快速索引），每个用户/AI 消息一个可点击圆点，点击或拖动即可快速滚动定位到对应消息，当前视口消息高亮并悬浮显示消息摘要。纯 client DOM 注入，热插拔挂载，不改 DSH 源码。",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "chat",
+    "scroll",
+    "navigation",
+    "plugin"
+  ],
+  "author": "xujiping",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xujiping/dsh-plugins.git",
+    "directory": "packages/dsh-chat-scroll-nav"
+  },
+  "homepage": "https://github.com/xujiping/dsh-plugins/tree/main/packages/dsh-chat-scroll-nav",
+  "bugs": {
+    "url": "https://github.com/xujiping/dsh-plugins/issues"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "license": "MIT",
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ]
+}
