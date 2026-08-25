@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { AgentBridgeAdapter, flattenHistory } from './lib-under-test.js'
+import { AgentBridgeAdapter, flattenHistory } from '../lib/index.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const fakeClaude = join(here, 'fake-claude.js')

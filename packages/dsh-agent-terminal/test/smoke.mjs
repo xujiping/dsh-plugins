@@ -21,7 +21,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
-import { AgentTerminal, isLoopbackRequest, makeRoutes, normalizeAgents } from './lib-under-test.js'
+import { AgentTerminal, isLoopbackRequest, makeRoutes, normalizeAgents } from '../lib/index.js'
 
 let passed = 0
 async function test(name, fn) {
@@ -226,7 +226,7 @@ await test('routes: agents list, create validation, fences', async () => {
 })
 
 await test('real node-pty: resolve module, spawn cat, echo, replay, kill', async () => {
-  const { AgentTerminal: RealAgentTerminal, resolveHostModule } = await import('./lib-under-test.js')
+  const { AgentTerminal: RealAgentTerminal, resolveHostModule } = await import('../lib/index.js')
   const ptyImpl = resolveHostModule('node-pty')
   assert.equal(typeof ptyImpl.spawn, 'function')
   const registry = new RealAgentTerminal({
@@ -259,7 +259,7 @@ await test('real node-pty: resolve module, spawn cat, echo, replay, kill', async
 })
 
 await test('apply(): wires registry + routes through a fake cordis ctx', async () => {
-  const mod = await import('./lib-under-test.js')
+  const mod = await import('../lib/index.js')
   const registered = []
   const upgrades = []
   const effects = []

@@ -1,6 +1,6 @@
 {
   "name": "dsh-global-memory",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DSH 全局记忆插件：侧边栏「全局记忆」页，直接查看/编辑 ~/.dsh/AGENTS.md 与 ~/.dsh/memory/*.md。Host 半边注册 /api/dsh-memory 路由（回环限制），client 半边注入侧边栏入口与中心面板。热插拔挂载，不改 DSH 源码。",
   "keywords": [
     "deepseek",
@@ -14,9 +14,9 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/xujiping/dsh-plugins.git",
-    "directory": "packages/dsh-memory"
+    "directory": "packages/dsh-global-memory"
   },
-  "homepage": "https://github.com/xujiping/dsh-plugins/tree/main/packages/dsh-memory",
+  "homepage": "https://github.com/xujiping/dsh-plugins/tree/main/packages/dsh-global-memory",
   "bugs": {
     "url": "https://github.com/xujiping/dsh-plugins/issues"
   },

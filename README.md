@@ -7,7 +7,7 @@
 
 | 包 | 功能 | 安装 |
 |---|---|---|
-| `packages/dsh-memory` | 全局记忆：侧边栏「全局记忆」页，直接查看/编辑 `~/.dsh/AGENTS.md` 与 `~/.dsh/memory/*.md` | `dsh plugin --profile <name> add dsh-global-memory` |
+| `packages/dsh-global-memory` | 全局记忆：侧边栏「全局记忆」页，直接查看/编辑 `~/.dsh/AGENTS.md` 与 `~/.dsh/memory/*.md` | `dsh plugin --profile <name> add dsh-global-memory` |
 | `packages/dsh-chat-scroll-nav` | 对话右侧快速导航条：聊天区右缘竖向迷你导航（类似手机通讯录索引），点/拖即跳转到对应消息，当前消息高亮 | `dsh plugin --profile <name> add dsh-chat-scroll-nav` |
 
 > **已搁置（2026-08-21 起从 desktop profile 卸载）**：`dsh-llm-agent-bridge` 与
@@ -17,13 +17,13 @@
 
 ```
 packages/
-  dsh-memory/              全局记忆插件（host 半边 lib/index.js + client 半边 lib/client.js）
+  dsh-global-memory/       全局记忆插件（host 半边 lib/index.js + client 半边 lib/client.js）
   dsh-chat-scroll-nav/     对话右侧快速导航条（纯 client 半边 lib/client.js；host 半边空实现）
   dsh-llm-agent-bridge/    LLM 适配器桥接（已搁置；host 半边，无 client；接入外部 agent CLI）
   dsh-agent-terminal/      智能体终端（已搁置；host 半边 PTY 注册表 + client 半边 xterm 面板；src/client.ts 构建产物为 lib/client.js）
 ```
 
-## 安装方式（以 dsh-memory 为例）
+## 安装方式（以 dsh-global-memory 为例）
 
 ```bash
 # 从 npm（发布后可用）
@@ -33,7 +33,7 @@ dsh plugin --profile web add dsh-global-memory
 dsh plugin --profile web add github:xujiping/dsh-plugins
 
 # 或本地 link 调试（不发布也能用）
-dsh plugin --profile web add link:~/AiProjects/dsh-plugins/packages/dsh-memory
+dsh plugin --profile web add link:~/AiProjects/dsh-plugins/packages/dsh-global-memory
 ```
 
 `--profile` 必填（`dsh plugin` 转发到 pnpm 按 profile 安装），`web` 换成你的实际
@@ -61,7 +61,7 @@ profile 名。装完重启 `dsh web`（或重载 profile）生效。
 
 ## 开发
 
-每个包自带测试（如 `packages/dsh-memory/test/smoke.mjs`，`node test/smoke.mjs` 运行）。
+每个包自带测试（如 `packages/dsh-global-memory/test/smoke.mjs`，`node test/smoke.mjs` 运行）。
 改 client 半边后刷新 Web GUI 即可看到效果（纯 DOM，MutationObserver 自愈）。
 
 ## License

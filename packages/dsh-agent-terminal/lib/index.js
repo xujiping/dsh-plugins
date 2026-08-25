@@ -22,6 +22,7 @@
 
 import { createRequire } from 'node:module'
 import { existsSync, readdirSync, statSync } from 'node:fs'
+import { isIPv4 } from 'node:net'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -159,9 +160,7 @@ export function childEnv() {
 
 /** IPv4 127/8 predicate (four decimal octets, first == 127). */
 function isIPv4Loopback(v4) {
-  const parts = v4.split('.')
-  return parts.length === 4 && parts[0] === '127'
-    && parts.every(part => /^\d{1,3}$/.test(part) && Number(part) <= 255)
+  return isIPv4(v4) && v4.startsWith('127.')
 }
 
 /** Loopback socket address (127/8, ::1, IPv4-mapped). */

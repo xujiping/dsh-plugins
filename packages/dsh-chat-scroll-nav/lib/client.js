@@ -528,23 +528,17 @@ window.__ModuleLoader__.load({
       syncActive(scroller, collectTargets())
     }
 
-    function scheduleRender() {
+    function schedule(fn) {
       if (rafPending) return
       rafPending = true
       requestAnimationFrame(() => {
         rafPending = false
-        render()
+        fn()
       })
     }
 
-    function scheduleLight() {
-      if (rafPending) return
-      rafPending = true
-      requestAnimationFrame(() => {
-        rafPending = false
-        syncLight()
-      })
-    }
+    const scheduleRender = () => schedule(render)
+    const scheduleLight = () => schedule(syncLight)
 
     // -------------------------------------------------------------- observers
     /** Did these mutations add/remove message rows (vs. in-place text updates)? */

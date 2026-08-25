@@ -16,3 +16,10 @@
 - Host 路由 `/api/dsh-memory/files|file`：回环信任围栏、key 白名单、
   原子写入（temp + rename）、1 MiB 上限、0600 权限
 - 发布要素：`dsh.bundle.patch`（cordis.patch.yml）+ `dsh.client`（web 平台）
+
+### 0.1.1 — 2026-08-25
+
+- 修复 client 模块 id：`'dsh-memory'` → `'dsh-global-memory'`，与包名一致；
+  0.1.0 通过 npm 安装时 client 半边因 id 不匹配无法加载，本版本修复该问题。
+- 目录改名：`packages/dsh-memory` → `packages/dsh-global-memory`，与 npm 包名对齐；
+  host 路由 `/api/dsh-memory/*` 与 CSS 前缀 `.dshm-` 保持不变（内部契约）。

@@ -19,6 +19,7 @@
 import { spawn } from 'node:child_process'
 import { statSync } from 'node:fs'
 import { homedir } from 'node:os'
+import { createInterface } from 'node:readline'
 
 /** Stable cordis plugin name. */
 export const name = 'llm-agent-bridge'
@@ -92,9 +93,7 @@ function isExecutable(candidate) {
  */
 function resolveCommand(command, env) {
   const candidate = expandHome(command)
-  if (candidate.includes('/')) {
-    return isExecutable(candidate) ? candidate : candidate
-  }
+  if (candidate.includes('/')) return candidate
   const dirs = [...pathDirs(env.PATH), ...COMMON_BIN_DIRS]
   for (const dir of dirs) {
     const full = `${dir}/${candidate}`
@@ -511,22 +510,9 @@ class AgentBridgeAdapter {
 
 /** Async iterator over complete lines of a readable stream. */
 async function* lineIterator(stream) {
-  let buffer = ''
-  for await (const chunk of stream) {
-    buffer += chunk.toString('utf8')
-    let newline
-    while ((newline = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, newline)
-      buffer = buffer.slice(newline + 1)
-      yield line
-    }
-    if (buffer.length > 4 * 1024 * 1024) {
-      // Absurd single-line output; flush to avoid unbounded memory.
-      yield buffer
-      buffer = ''
-    }
-  }
-  if (buffer.length > 0) yield buffer
+  const rl = createInterface({ input: stream, crlfDelay: Infinity })
+  for await (const line of rl) yield line
+  rl.close()
 }
 
 /** Cordis plugin entry. */

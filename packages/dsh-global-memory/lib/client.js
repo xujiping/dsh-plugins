@@ -2,11 +2,12 @@
  * dsh-memory — browser half (runs inside the dsh web GUI).
  *
  * Plain-DOM client: registers no services (inject: []), injects a sidebar
- * entry row ("全局记忆") and, when toggled, takes over the center column
- * with a file list + editor panel backed by /api/dsh-memory. The row is
- * plain DOM with a self-healing MutationObserver (task-board / dsh-ssh
- * precedent), so it can never disturb the shell's React reconciliation.
- * Failure policy: mount problems are logged, never thrown.
+ * footer entry ("全局记忆") — stacked at the bottom beside 设置/用量账本,
+ * matching the shell's footer-seat geometry — and, when toggled, takes over
+ * the center column with a file list + editor panel backed by /api/dsh-memory.
+ * The row is plain DOM with a self-healing MutationObserver (task-board /
+ * dsh-ssh precedent), so it can never disturb the shell's React
+ * reconciliation. Failure policy: mount problems are logged, never thrown.
  */
 window.__ModuleLoader__.load({
   // Must match the package name used by DSH's client-module loader.
@@ -30,7 +31,11 @@ window.__ModuleLoader__.load({
     const PANEL_NAME = 'memory'
     const SIDEBAR_ROW_SELECTOR = '[class*="sessionRow"], [class*="projectRow"], [class*="searchResultRow"], [class*="searchResultWorkspace"], [class*="newSession"]'
 
-    const ICON = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.2c1.6-.9 3.4-.9 5 0v9.6c-1.6-.9-3.4-.9-5 0z"/><path d="M13.5 3.2c-1.6-.9-3.4-.9-5 0v9.6c1.6-.9 3.4-.9 5 0z"/></svg>'
+    // Official @deepseek-ai/dsh-client-ui-primitives `IconListPenOutline16`:
+    // a filled 16×16 notepad+pen glyph (fill="currentColor"), the same icon
+    // language the shell's footer seats use, so size/weight/colour match
+    // 用量账本/设置 exactly. Paths copied verbatim from the primitives bundle.
+    const ICON = '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M10.8239 3.54733V4.78443H4.63437V3.54733H10.8239Z"/><path d="M10.8239 6.12629V7.36338H4.63437V6.12629H10.8239Z"/><path d="M9.073 8.70524V9.94234H4.63437V8.70524H9.073Z"/><path d="M9.13321 0.573526C10.0076 0.573525 10.7179 0.572522 11.285 0.63397C11.8645 0.696791 12.3743 0.831648 12.8193 1.1548C13.0776 1.34246 13.3056 1.57047 13.4933 1.82875C13.8164 2.2737 13.9513 2.7836 14.0141 3.36303C14.0755 3.93015 14.0745 4.64049 14.0745 5.51485V6.1757L12.7327 7.5629V5.51485C12.7327 4.61092 12.732 3.9862 12.6803 3.5081C12.6298 3.0427 12.5379 2.79497 12.4083 2.61654C12.3033 2.47211 12.176 2.34472 12.0315 2.23977C11.8531 2.11016 11.6054 2.01823 11.14 1.96777C10.6618 1.91601 10.0372 1.91539 9.13321 1.91539H6.32658C5.42262 1.91539 4.79796 1.91604 4.31983 1.96777C3.85451 2.01819 3.60672 2.11029 3.42827 2.23977C3.28392 2.34465 3.15643 2.47223 3.0515 2.61654C2.9219 2.79496 2.82997 3.04274 2.7795 3.5081C2.72774 3.9862 2.72712 4.61092 2.72712 5.51485V10.023C2.72712 10.9273 2.72773 11.5525 2.7795 12.0307C2.82992 12.4959 2.92205 12.7429 3.0515 12.9213C3.15645 13.0657 3.28384 13.1931 3.42827 13.2981C3.60676 13.4277 3.85408 13.5206 4.31983 13.5711C4.79797 13.6228 5.42259 13.6234 6.32658 13.6234H6.87057L5.57707 14.9593C5.03527 14.9556 4.57031 14.9467 4.17476 14.9039C3.59508 14.841 3.08558 14.7063 2.64048 14.383C2.38215 14.1953 2.15422 13.9684 1.96653 13.7101C1.64319 13.2649 1.50851 12.7546 1.4457 12.1748C1.38432 11.6076 1.38525 10.8974 1.38525 10.023V5.51485C1.38525 4.64049 1.38426 3.93015 1.4457 3.36303C1.50853 2.78363 1.64341 2.27368 1.96653 1.82875C2.15417 1.57059 2.38228 1.34239 2.64048 1.1548C3.08544 0.831805 3.59533 0.696762 4.17476 0.63397C4.74193 0.572552 5.45218 0.573525 6.32658 0.573526H9.13321Z"/><path d="M14.2193 14.9553H10.0124L11.3744 13.6134H14.2193V14.9553Z"/><path d="M8.24493 13.3711L7.49015 14.8806C7.40148 15.058 7.58961 15.2461 7.76695 15.1574L9.27651 14.4027L14.6147 9.09934L13.5832 8.06775L8.24493 13.3711Z"/></svg>'
 
     // -------------------------------------------------------------- state
     const state = {
@@ -179,11 +184,12 @@ window.__ModuleLoader__.load({
       style.id = 'dsh-memory-styles'
       style.setAttribute('data-plugin', 'dsh-memory')
       style.textContent = `
-.dshm-entry { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; margin: 1px 0; border: 0; border-radius: 8px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; cursor: pointer; text-align: left; }
-.dshm-entry:hover { background: var(--dsw-specific-sidebar-nav-item-hover); color: var(--dsw-alias-label-primary); }
-.dshm-entry[data-active="true"] { background: var(--dsw-specific-sidebar-nav-item-active); color: var(--dsw-alias-label-primary); font-weight: 600; }
-.dshm-entryIcon { display: inline-flex; align-items: center; }
-.dshm-entryLabel { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dshm-entry { box-sizing: border-box; flex: 0 0 100%; min-width: 0; width: 100%; height: 42px; margin: 8px 0 0; padding: 0 10px 0 8px; border: 0; border-radius: 12px; background: transparent; color: var(--dsw-alias-label-primary); font-family: inherit; font-size: 14px; line-height: 22px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; overflow: hidden; text-align: left; }
+.dshm-entry:hover, .dshm-entry[data-active="true"] { background: var(--dsw-alias-interactive-bg-hover); }
+.dshm-entryIcon { flex: none; display: inline-flex; align-items: center; }
+.dshm-entryLabel { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.dshm-entry.dshm-rail { width: 36px; height: 36px; margin: 8px 0 10px; padding: 0; border-radius: 50%; justify-content: center; gap: 0; }
+.dshm-entry.dshm-rail .dshm-entryLabel { display: none; }
 .dshm-view { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); z-index: 5; }
 html[data-dsh-memory-active] [data-pane="conversation"] > :not([data-dsh-memory-view]),
 html[data-dsh-memory-active] [class*="centerCol"] > :not([data-dsh-memory-view]) { display: none !important; }
@@ -380,35 +386,24 @@ html[data-dsh-memory-active] [class*="centerCol"] > :not([data-dsh-memory-view])
     }
 
     // --------------------------------------------------------- sidebar entry
-    function sidebarRoot() {
-      const column = document.querySelector('[data-pane="sidebar"], [class*="sidebarCol"]')
-      if (column === null) return undefined
-      const logoOwner = column.querySelector('[class*="logoRow"]')?.parentElement
-      return logoOwner ?? (column.firstElementChild ?? undefined)
-    }
-
-    function newSessionButton(root) {
-      const nested = root.querySelector('button[class*="newSession"]')
-      if (nested !== null) return nested
-      for (const child of root.children) {
-        if (child.tagName === 'BUTTON') return child
-      }
+    // The official sidebar pins its footer seats to the bottom of the column:
+    // `sidebar.footer.action` (用量账本 / 插件面板) above `sidebar.settings`
+    // (设置). Appending here renders the entry at the bottom, stacked as a
+    // full-width row exactly like those seats. The slot container is
+    // `display:contents`, so the entry becomes a flex item of the wrapping
+    // footer row — same geometry as the other occupants.
+    function footerSeat() {
+      const slot = document.querySelector('[data-slot="sidebar.footer.action"]')
+      if (slot !== null) return slot
+      const foot = document.querySelector('[class*="footArea"]')
+      if (foot !== null) return foot
       return undefined
     }
 
-    function placeEntry(root, entry) {
-      const button = newSessionButton(root)
-      if (button === undefined) return false
-      if (entry.parentElement !== root) {
-        const row = button.closest('[class*="logoRow"]')
-        const base = (row !== null && row.parentElement === root) ? row : button
-        const family = Array.from(root.children).filter(
-          (node) => node instanceof HTMLElement
-            && node.matches('[data-dsh-taskboard-entry], [data-dsh-ssh-entry], [data-dsh-memory-entry]'),
-        )
-        const anchor = family.length > 0 ? family[family.length - 1].nextElementSibling : base.nextElementSibling
-        root.insertBefore(entry, anchor)
-      }
+    function placeEntry(entry) {
+      const seat = footerSeat()
+      if (seat === undefined) return false
+      if (entry.parentElement !== seat) seat.append(entry)
       return true
     }
 
@@ -433,14 +428,28 @@ html[data-dsh-memory-active] [class*="centerCol"] > :not([data-dsh-memory-view])
       entry.innerHTML = '<span class="dshm-entryIcon">' + ICON + '</span><span class="dshm-entryLabel">全局记忆</span>'
       entry.addEventListener('click', () => { setOpen(!state.open) })
       entryElement = entry
-      let root = undefined
       let placed = false
+      let railObserver = undefined
 
+      // Collapsed sidebar narrows to a 56px rail and every bottom control
+      // becomes a 36px circle (设置 / 用量账本 / 插件面板). Mirror that by
+      // watching the column width and toggling a rail class on the entry.
+      const applyRail = () => {
+        const column = document.querySelector('[data-pane="sidebar"], [class*="sidebarCol"]')
+        const rail = column !== null && column.getBoundingClientRect().width <= 80
+        entry.classList.toggle('dshm-rail', rail)
+      }
       const tryPlace = () => {
         if (placed && document.body.contains(entry)) return
-        root = sidebarRoot()
-        if (root === undefined) return
-        placed = placeEntry(root, entry)
+        placed = placeEntry(entry)
+        if (placed && railObserver === undefined && typeof ResizeObserver !== 'undefined') {
+          const column = document.querySelector('[data-pane="sidebar"], [class*="sidebarCol"]')
+          if (column !== null) {
+            railObserver = new ResizeObserver(applyRail)
+            railObserver.observe(column)
+            applyRail()
+          }
+        }
       }
       const waitObserver = new MutationObserver(() => { tryPlace() })
       waitObserver.observe(document.body, { childList: true, subtree: true })
@@ -449,6 +458,7 @@ html[data-dsh-memory-active] [class*="centerCol"] > :not([data-dsh-memory-view])
 
       return () => {
         waitObserver.disconnect()
+        if (railObserver !== undefined) railObserver.disconnect()
         entry.remove()
         entryElement = null
       }

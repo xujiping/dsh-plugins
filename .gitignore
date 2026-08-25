@@ -4,3 +4,5 @@ node_modules/
 .vscode/
 .idea/
 *.tmp
+.dsh-vision-router/
+.npm-cache/

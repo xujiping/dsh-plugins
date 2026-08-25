@@ -1,4 +1,6 @@
-# dsh-memory
+# dsh-global-memory
+
+> npm 包名即目录名；曾用名 `dsh-memory`（因 npm 重名改为 `dsh-global-memory`，host 路由仍为 `/api/dsh-memory/*`）。
 
 DSH 全局记忆插件：在 dsh Web GUI 侧边栏加「全局记忆」入口，中心面板直接查看/编辑：
 
