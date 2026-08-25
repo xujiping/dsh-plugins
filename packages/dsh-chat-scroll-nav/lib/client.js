@@ -1,11 +1,12 @@
 /**
  * dsh-chat-scroll-nav — browser half (runs inside the dsh web GUI).
  *
- * Adds a slim quick-nav rail on the right edge of the chat conversation,
- * phone-contacts style: one tappable dot per substantive message (user or
- * assistant), positioned proportionally along the scroll content. Click or
- * drag to jump; the message currently in view is highlighted; hovering a dot
- * shows the message's first line.
+ * Adds a message quick-nav rail on the right edge of the chat conversation:
+ * a fixed-height list (max 10 rows) of the user's own messages, vertically
+ * centered on the conversation area. Each label shows the message text
+ * (truncated with ellipsis; hover for the full preview). Click a label to
+ * jump to that message; when there are more than 10, up/down buttons scroll
+ * the list and the active message's label is kept in view automatically.
  *
  * Plain-DOM injection with a self-healing MutationObserver — the rail lives
  * OUTSIDE the React tree (appended to document.body, position:fixed) and is
@@ -31,8 +32,6 @@ window.__ModuleLoader__.load({
     const FLOW_SEL = '[data-chat-flow]'
     const ITEM_SEL = '[data-chat-anchor-key]'
     const COMPOSER_SEL = '[data-composer-seat]'
-    /** Kinds we render a nav dot for: the substantive conversation turns. */
-    const NAV_KINDS = new Set(['user', 'assistant'])
     const RAIL_SEL = '[data-dsh-scroll-nav="rail"]'
     const TICK_SEL = '[data-dsh-scroll-nav="tick"]'
 
@@ -43,71 +42,100 @@ window.__ModuleLoader__.load({
       style.id = 'dsh-scroll-nav-styles'
       style.setAttribute('data-plugin', 'dsh-chat-scroll-nav')
       style.textContent = `
-/* rail: fixed overlay on the right edge of the conversation area */
+/* rail: fixed overlay on the right edge of the conversation area.
+   Fixed height = up button + 10 label rows + down button; vertically centered. */
 .dsn-rail {
   position: fixed;
   z-index: 45;
-  width: 14px;
-  border-radius: 8px;
+  width: 168px;
+  border-radius: 10px;
   cursor: pointer;
-  touch-action: none;
   user-select: none;
   -webkit-user-select: none;
   background: transparent;
-  transition: background 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  transition: background 0.15s ease, box-shadow 0.15s ease, backdrop-filter 0.15s ease;
 }
-.dsn-rail:hover { background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,0.12)); }
+.dsn-rail:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,0.12));
+  -webkit-backdrop-filter: blur(12px) saturate(1.4);
+  backdrop-filter: blur(12px) saturate(1.4);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.18), 0 4px 16px rgba(0,0,0,0.10);
+}
 .dsn-rail[data-hidden="true"] { display: none; }
 
-/* thin center track */
-.dsn-track {
-  position: absolute;
-  left: 50%;
-  top: 5px;
-  bottom: 5px;
-  width: 2px;
-  border-radius: 1px;
-  transform: translateX(-50%);
-  background: var(--dsw-alias-scrollbar-bg-l2, rgba(127,127,127,0.35));
-  opacity: 0.55;
+/* up / down scroll buttons */
+.dsn-btn {
+  flex: 0 0 auto;
+  height: 20px;
+  line-height: 20px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.8));
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, color 0.12s ease;
 }
-.dsn-rail:hover .dsn-track { opacity: 0.85; }
+.dsn-rail:hover .dsn-btn[data-enabled="true"] { opacity: 1; pointer-events: auto; }
+.dsn-btn:hover { color: var(--dsw-static-deepseek-500, #4d6bfe); }
 
-/* one dot per message */
+/* scrollable list of labels: exactly 10 rows tall, centered when short */
+.dsn-list {
+  position: relative;
+  flex: 0 0 auto;
+  height: 252px; /* 10 * 18px rows + 9 * 8px gaps */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  justify-content: safe center;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 4px 0;
+  scrollbar-width: none;
+}
+.dsn-list::-webkit-scrollbar { display: none; }
+
+/* one label per user message: fixed spacing, truncated text */
 .dsn-tick {
-  position: absolute;
-  left: 50%;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-  background: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.7));
-  transition: transform 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+  position: relative;
+  flex: 0 0 auto;
+  max-width: 150px;
+  height: 18px;
+  line-height: 18px;
+  padding: 0 7px;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #555);
+  font-size: 11px;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
 }
 .dsn-tick[data-kind="user"] {
-  background: var(--dsw-static-deepseek-500, #4d6bfe);
-  width: 7px;
-  height: 7px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #555);
 }
-.dsn-tick[data-kind="assistant"] {
-  background: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.7));
-}
+.dsn-tick[data-kind="assistant"] { display: none; }
 .dsn-tick[data-active="true"] {
   background: var(--dsw-static-deepseek-500, #4d6bfe);
-  transform: translate(-50%, -50%) scale(1.55);
+  color: var(--dsw-alias-bg-base, #fff);
   box-shadow: 0 0 0 2px var(--dsw-alias-bg-base, #fff);
 }
-.dsn-rail:hover .dsn-tick { box-shadow: 0 0 0 1px var(--dsw-alias-bg-base, #fff); }
-.dsn-rail:hover .dsn-tick[data-active="true"] { box-shadow: 0 0 0 2px var(--dsw-alias-bg-base, #fff); }
+.dsn-rail:hover .dsn-tick[data-active="true"] { background: var(--dsw-static-deepseek-500, #4d6bfe); box-shadow: 0 0 0 2px var(--dsw-alias-bg-base, #fff); }
 
 /* message count chip (bottom of rail, shown on hover) */
 .dsn-count {
-  position: absolute;
-  left: 50%;
-  bottom: 2px;
-  transform: translateX(-50%);
+  flex: 0 0 auto;
+  height: 12px;
+  line-height: 12px;
+  text-align: center;
   font-size: 9px;
-  line-height: 1;
   font-family: var(--ds-font-family-code, ui-monospace, Menlo, monospace);
   color: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.8));
   opacity: 0;
@@ -154,14 +182,31 @@ window.__ModuleLoader__.load({
     }
 
     // --------------------------------------------------------------- helpers
+    /** Preview text cache — cloning every row on every sync is far too costly. */
+    const previewCache = new Map()
+
     /** Text preview for one message row: strip UI chrome, collapse whitespace. */
-    function messagePreview(item) {
+    function messagePreview(item, key) {
+      const cacheKey = key || item.getAttribute('data-chat-anchor-key') || ''
+      if (cacheKey !== '' && previewCache.has(cacheKey)) return previewCache.get(cacheKey)
       const clone = item.cloneNode(true)
       clone.querySelectorAll(
         'button, svg, [role="button"], [aria-hidden="true"], [data-dsh-scroll-nav], script, style',
       ).forEach((node) => node.remove())
       const text = (clone.textContent || '').replace(/\s+/g, ' ').trim()
-      return text.length === 0 ? '' : text.slice(0, 90)
+      const preview = text.length === 0 ? '' : text.slice(0, 90)
+      if (cacheKey !== '') {
+        if (previewCache.size > 600) previewCache.clear()
+        previewCache.set(cacheKey, preview)
+      }
+      return preview
+    }
+
+    /** Cached message targets; invalidated when the row set may have changed. */
+    let targetsCache = null
+    let targetsCacheInvalid = true
+    function invalidateTargets() {
+      targetsCacheInvalid = true
     }
 
     /** Resolve the real scroll container (the conversation scroll body). */
@@ -182,18 +227,21 @@ window.__ModuleLoader__.load({
       return null
     }
 
-    /** All rendered substantive messages in order. */
+    /** All rendered user messages in order (cached between row-set changes). */
     function collectTargets() {
+      if (!targetsCacheInvalid && targetsCache !== null) return targetsCache
       const flow = document.querySelector(FLOW_SEL)
       if (flow === null) return []
-      const items = Array.from(flow.querySelectorAll(ITEM_SEL))
+      const items = flow.querySelectorAll(ITEM_SEL)
       const targets = []
       for (const item of items) {
         const kind = item.getAttribute('data-chat-flow-kind') || ''
-        if (NAV_KINDS.has(kind)) {
+        if (kind === 'user') {
           targets.push({ item, kind, key: item.getAttribute('data-chat-anchor-key') || '' })
         }
       }
+      targetsCache = targets
+      targetsCacheInvalid = false
       return targets
     }
 
@@ -205,25 +253,35 @@ window.__ModuleLoader__.load({
       return scroller.scrollTop + (center - scrollerRect.top)
     }
 
-    /** The message currently being read: first whose bottom passes the top edge. */
+    /** The message currently being read: first whose bottom passes the top edge.
+     *  Rows are laid out in order, so binary-search instead of walking all. */
     function activeIndex(targets, scroller) {
+      if (targets.length === 0) return -1
       const rect = scroller.getBoundingClientRect()
       const topEdge = rect.top + 8
-      for (let i = 0; i < targets.length; i++) {
-        const r = targets[i].item.getBoundingClientRect()
-        if (r.bottom >= topEdge) return i
+      let lo = 0
+      let hi = targets.length - 1
+      let result = targets.length - 1
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1
+        if (targets[mid].item.getBoundingClientRect().bottom >= topEdge) {
+          result = mid
+          hi = mid - 1
+        } else {
+          lo = mid + 1
+        }
       }
-      return targets.length - 1
+      return result
     }
 
     // ------------------------------------------------------------------ rail
     let rail = null
-    let track = null
+    let upBtn = null
+    let downBtn = null
+    let list = null
     let tooltip = null
     let count = null
     let rafPending = false
-    let dragging = false
-    let mutationObserver = null
 
     function buildRail() {
       ensureStyles()
@@ -232,9 +290,21 @@ window.__ModuleLoader__.load({
       rail.className = 'dsn-rail'
       rail.setAttribute('aria-hidden', 'true')
 
-      track = document.createElement('div')
-      track.className = 'dsn-track'
-      rail.append(track)
+      upBtn = document.createElement('div')
+      upBtn.setAttribute('data-dsh-scroll-nav', 'btn-up')
+      upBtn.className = 'dsn-btn'
+      upBtn.textContent = '▲'
+      rail.append(upBtn)
+
+      list = document.createElement('div')
+      list.className = 'dsn-list'
+      rail.append(list)
+
+      downBtn = document.createElement('div')
+      downBtn.setAttribute('data-dsh-scroll-nav', 'btn-down')
+      downBtn.className = 'dsn-btn'
+      downBtn.textContent = '▼'
+      rail.append(downBtn)
 
       count = document.createElement('div')
       count.className = 'dsn-count'
@@ -248,17 +318,6 @@ window.__ModuleLoader__.load({
 
       document.body.append(rail)
       wireEvents()
-    }
-
-    function scrubTo(clientY) {
-      if (rail === null) return
-      const scroller = findScroller()
-      if (scroller === null) return
-      const rect = rail.getBoundingClientRect()
-      if (rect.height <= 0) return
-      const ratio = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height))
-      const maxScroll = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-      scroller.scrollTop = ratio * maxScroll
     }
 
     function scrollToKey(key) {
@@ -282,7 +341,7 @@ window.__ModuleLoader__.load({
       if (roleEl === null || textEl === null) return
       roleEl.textContent = target.kind === 'user' ? '你' : 'AI'
       roleEl.dataset.kind = target.kind
-      const preview = messagePreview(target.item)
+      const preview = messagePreview(target.item, target.key)
       textEl.textContent = preview
       tooltip.setAttribute('data-show', 'true')
       // position to the left of the tick, vertically centered on it
@@ -301,26 +360,31 @@ window.__ModuleLoader__.load({
       tooltip.setAttribute('data-show', 'false')
     }
 
+    /** Scroll the label list by one page (up/down buttons). */
+    function scrollListBy(direction) {
+      if (list === null) return
+      const page = list.clientHeight || 252
+      if (typeof list.scrollBy === 'function') {
+        list.scrollBy({ top: direction * page, behavior: 'smooth' })
+      } else {
+        list.scrollTop += direction * page
+      }
+    }
+
     function wireEvents() {
       if (rail === null) return
-      rail.addEventListener('mousedown', (event) => {
-        dragging = true
-        scrubTo(event.clientY)
-        event.preventDefault()
-      })
-      window.addEventListener('mousemove', (event) => {
-        if (dragging) scrubTo(event.clientY)
-      })
-      window.addEventListener('mouseup', () => {
-        dragging = false
-      })
       rail.addEventListener('click', (event) => {
         const tick = event.target.closest(TICK_SEL)
         if (tick !== null) {
           const key = tick.getAttribute('data-anchor-key') || ''
           scrollToKey(key)
+          return
         }
+        if (event.target === upBtn) scrollListBy(-1)
+        else if (event.target === downBtn) scrollListBy(1)
       })
+      // re-evaluate button states after the list itself scrolls (wheel / follow)
+      list.addEventListener('scroll', () => syncButtons())
       // delegated hover tooltip
       rail.addEventListener('mouseover', (event) => {
         const tick = event.target.closest(TICK_SEL)
@@ -334,7 +398,7 @@ window.__ModuleLoader__.load({
         }
       })
       rail.addEventListener('mouseout', () => {
-        if (!dragging) hideTooltip()
+        hideTooltip()
       })
       document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') hideTooltip()
@@ -350,51 +414,85 @@ window.__ModuleLoader__.load({
 
     let lastSignature = null
 
-    /** Update the rail's fixed overlay geometry (top/height/right). */
+    /** Update the rail's fixed overlay geometry: fixed height, vertically centered. */
     function updateGeometry(scroller) {
       const scrollerRect = scroller.getBoundingClientRect()
-      const composer = scroller.querySelector(COMPOSER_SEL)
-      const composerRect = composer === null ? null : composer.getBoundingClientRect()
-      const top = scrollerRect.top
-      let bottom = scrollerRect.bottom
-      // rail spans the message area: shrink to the composer when it is in view
-      if (composerRect !== null && composerRect.top > scrollerRect.top && composerRect.top < scrollerRect.bottom) {
-        bottom = composerRect.top
-      }
+      const railHeight = rail.offsetHeight || 304 // btn + list(10 rows) + btn + count
+      // center the fixed-height rail on the conversation area
+      const top = scrollerRect.top + Math.max(0, (scrollerRect.height - railHeight) / 2)
       rail.style.top = Math.round(top) + 'px'
-      rail.style.height = Math.max(0, Math.round(bottom - top)) + 'px'
       // hug the scroller's right edge, inset enough to clear the native scrollbar
       const insetFromViewport = window.innerWidth - scrollerRect.right + 10
       rail.style.right = Math.max(4, insetFromViewport) + 'px'
     }
 
-    /** Rebuild all tick dots from the current target list. */
+    /** Rebuild all labels from the current target list (fixed spacing).
+     *  Long conversations: shells mount immediately; preview text (the costly
+     *  cloneNode part) fills in over a few frames instead of one big jank. */
+    let tickCache = []
+    let lastActiveTick = null
+    let fillJob = 0
     function rebuildTicks(scroller, targets) {
-      for (const old of Array.from(rail.querySelectorAll(TICK_SEL))) old.remove()
-      const scrollHeight = Math.max(1, scroller.scrollHeight)
-      targets.forEach((target, index) => {
+      fillJob++
+      for (const old of Array.from(list.querySelectorAll(TICK_SEL))) old.remove()
+      const job = fillJob
+      tickCache = targets.map((target, index) => {
         const tick = document.createElement('div')
         tick.setAttribute('data-dsh-scroll-nav', 'tick')
         tick.className = 'dsn-tick'
         tick.setAttribute('data-kind', target.kind)
         tick.setAttribute('data-index', String(index))
         tick.setAttribute('data-anchor-key', target.key)
-        const ratio = Math.min(1, Math.max(0, itemOffset(target.item, scroller) / scrollHeight))
-        tick.style.top = Math.round(ratio * rail.clientHeight) + 'px'
-        rail.append(tick)
+        list.append(tick)
+        return tick
       })
+      lastActiveTick = null
+      const fillFrom = (start) => {
+        if (job !== fillJob) return // superseded by a newer rebuild
+        const end = Math.min(targets.length, start + 50)
+        for (let i = start; i < end; i++) {
+          const preview = messagePreview(targets[i].item, targets[i].key)
+          tickCache[i].setAttribute('title', preview)
+          tickCache[i].textContent = preview
+        }
+        if (end < targets.length) requestAnimationFrame(() => fillFrom(end))
+      }
+      fillFrom(0)
     }
 
-    /** Highlight the message currently in view; update the count chip. */
+    /** Enable the up/down buttons only when the list can scroll that way. */
+    function syncButtons() {
+      if (list === null || upBtn === null || downBtn === null) return
+      const scrollHeight = list.scrollHeight || 0
+      const clientHeight = list.clientHeight || 0
+      const overflow = scrollHeight > clientHeight + 1
+      const scrollTop = list.scrollTop || 0
+      upBtn.setAttribute('data-enabled', overflow && scrollTop > 1 ? 'true' : 'false')
+      downBtn.setAttribute(
+        'data-enabled',
+        overflow && scrollTop + clientHeight < scrollHeight - 1 ? 'true' : 'false',
+      )
+    }
+
+    /** Highlight the message currently in view; keep it visible in the list. */
     function syncActive(scroller, targets) {
       if (targets.length === 0) return
       const active = activeIndex(targets, scroller)
-      const ticks = Array.from(rail.querySelectorAll(TICK_SEL))
-      ticks.forEach((tick, index) => {
-        if (index === active) tick.setAttribute('data-active', 'true')
-        else tick.removeAttribute('data-active')
-      })
-      if (count !== null) count.textContent = String(targets.length)
+      const activeTick = active >= 0 && active < tickCache.length ? tickCache[active] : null
+      // touch at most two nodes per sync instead of re-writing all labels
+      if (activeTick !== lastActiveTick) {
+        if (lastActiveTick !== null && lastActiveTick.isConnected) lastActiveTick.removeAttribute('data-active')
+        if (activeTick !== null) activeTick.setAttribute('data-active', 'true')
+        lastActiveTick = activeTick
+        // follow the active label when the list itself overflows and scrolls
+        if (activeTick !== null && typeof activeTick.scrollIntoView === 'function') {
+          activeTick.scrollIntoView({ block: 'nearest' })
+        }
+      }
+      if (count !== null && count.textContent !== String(targets.length)) {
+        count.textContent = String(targets.length)
+      }
+      syncButtons()
     }
 
     /**
@@ -449,9 +547,33 @@ window.__ModuleLoader__.load({
     }
 
     // -------------------------------------------------------------- observers
+    /** Did these mutations add/remove message rows (vs. in-place text updates)? */
+    function touchesAnchors(mutations) {
+      if (mutations == null) return true // unknown → assume the worst, full re-sync
+      for (const m of mutations) {
+        for (const nodes of [m.addedNodes, m.removedNodes]) {
+          if (nodes == null) continue
+          for (const node of nodes) {
+            if (node.nodeType !== undefined && node.nodeType !== 1) continue
+            if (typeof node.matches === 'function' && node.matches(ITEM_SEL)) return true
+            if (typeof node.querySelector === 'function' && node.querySelector(ITEM_SEL) !== null) return true
+          }
+        }
+      }
+      return false
+    }
+
     function wireObservers() {
-      // message flow mutations → full re-sync (streaming, prepends, switches)
-      const flowObserver = new MutationObserver(() => scheduleRender())
+      // message flow mutations: row add/remove → full re-sync; streaming text
+      // updates (assistant tokens etc.) only need geometry + active refresh.
+      const flowObserver = new MutationObserver((mutations) => {
+        if (touchesAnchors(mutations)) {
+          invalidateTargets()
+          scheduleRender()
+        } else {
+          scheduleLight()
+        }
+      })
       const observeFlow = () => {
         const flow = document.querySelector(FLOW_SEL)
         if (flow !== null) {
@@ -464,17 +586,29 @@ window.__ModuleLoader__.load({
         // flow not mounted yet: watch the whole body until it appears
         flowObserver.observe(document.body, { childList: true, subtree: true })
       }
-      // scroller change / window resize → light sync (scroll + geometry)
+      // scroller swap / composer mount → rebind listeners + full re-sync.
+      // While a scroller is already bound, DOM churn elsewhere in the body
+      // (streaming!) only needs a light refresh, not a full scan.
       let currentScroller = null
+      let currentComposer = null
       const scrollerObserver = new MutationObserver(() => {
         const next = findScroller()
-        if (next !== currentScroller) {
-          if (currentScroller !== null) currentScroller.removeEventListener('scroll', scheduleLight)
+        const composer = document.querySelector(COMPOSER_SEL)
+        if (next !== currentScroller || composer !== currentComposer) {
+          if (currentScroller !== null && currentScroller !== next) {
+            currentScroller.removeEventListener('scroll', scheduleLight)
+          }
+          if (next !== null && next !== currentScroller) {
+            next.addEventListener('scroll', scheduleLight, { passive: true })
+          }
           currentScroller = next
-          if (next !== null) next.addEventListener('scroll', scheduleLight, { passive: true })
+          currentComposer = composer
+          observeComposer()
+          invalidateTargets()
+          scheduleRender()
+        } else {
+          scheduleLight()
         }
-        observeComposer()
-        scheduleRender()
       })
       scrollerObserver.observe(document.body, { childList: true, subtree: true })
       window.addEventListener('resize', scheduleLight)

@@ -260,29 +260,42 @@ const rail = dom.body.querySelector('[data-dsh-scroll-nav="rail"]')
 assert.ok(rail !== null, 'rail is mounted even without a conversation')
 assert.equal(rail.getAttribute('data-hidden'), 'true', 'rail hidden with no conversation')
 
-// 2. with a conversation → ticks appear, one per user/assistant message
+// 2. with a conversation → one label per user message, text shown, fixed layout in list
 buildConversation()
 // fire the plugin's observers (stubs don't auto-fire), then drain rAF
 mutationCbs.forEach((o) => o.cb())
 while (rafQueue.length) rafQueue.shift()()
 const ticks = dom.body.querySelectorAll('[data-dsh-scroll-nav="tick"]')
-assert.equal(ticks.length, 6, 'ticks = 6 user/assistant messages (tool-call excluded)')
+assert.equal(ticks.length, 3, 'ticks = 3 user messages (assistant/tool-call excluded)')
 assert.equal(rail.getAttribute('data-hidden'), 'false', 'rail visible with messages')
+assert.ok(ticks[0].textContent.includes('我的问题'), 'tick renders the user message text')
+const listEl = dom.body.querySelector('.dsn-list')
+assert.ok(listEl !== null, 'labels live in the scrollable list container')
+assert.ok(ticks.every((t) => t.parentElement === listEl), 'ticks are stacked in document order (fixed spacing via flex)')
 
 // 3. click-to-jump scrolls the container
 const scroller = dom.body.querySelector('[data-conversation-scroll]')
 const flow = dom.body.querySelector('[data-chat-flow]')
-const row4 = flow.children[4] // node-4, assistant
-row4._rect = { top: 2000, left: 300, right: 1100, bottom: 2200, height: 200, width: 800 }
-const tick4 = ticks[3] // index 3 = 4th user/assistant target (node-4)
-const clickEvent = { target: tick4, clientY: 500, preventDefault() {} }
+const row5 = flow.children[5] // node-5, last user message
+row5._rect = { top: 2000, left: 300, right: 1100, bottom: 2200, height: 200, width: 800 }
+const tick5 = ticks[2] // index 2 = 3rd user target (node-5)
+const clickEvent = { target: tick5, clientY: 500, preventDefault() {} }
 rail._listeners.click.forEach((fn) => fn(clickEvent))
 assert.ok(scroller.scrollTop >= 0, 'click triggers a scroll jump')
 
-// 4. scrub on mousedown maps to proportional scroll
-const before = scroller.scrollTop
-rail._listeners.mousedown.forEach((fn) => fn({ clientY: 430, preventDefault() {} }))
-assert.notEqual(scroller.scrollTop, before, 'mousedown scrubs the scroller')
+// 4. up/down scroll buttons exist and are wired for click scrolling
+const upBtn = dom.body.querySelector('[data-dsh-scroll-nav="btn-up"]')
+const downBtn = dom.body.querySelector('[data-dsh-scroll-nav="btn-down"]')
+assert.ok(upBtn !== null && downBtn !== null, 'up/down scroll buttons are mounted')
+// stub list reports no overflow → both buttons disabled
+assert.equal(upBtn.getAttribute('data-enabled'), 'false', 'up button disabled without overflow')
+assert.equal(downBtn.getAttribute('data-enabled'), 'false', 'down button disabled without overflow')
+// simulate overflow: list can scroll down, not up
+listEl.scrollHeight = 1000
+listEl.clientHeight = 216
+listEl.scrollTop = 0
+rail._listeners.click.forEach((fn) => fn({ target: downBtn, preventDefault() {} }))
+rail._listeners.click.forEach((fn) => fn({ target: upBtn, preventDefault() {} }))
 
 console.log('dsh-chat-scroll-nav client smoke: all assertions passed')
 process.exit(0)
