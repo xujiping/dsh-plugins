@@ -1,13 +1,10 @@
 /**
  * dsh-memory — browser half (runs inside the dsh web GUI).
  *
- * Plain-DOM client: registers no services (inject: []), injects a sidebar
- * footer entry ("全局记忆") — stacked at the bottom beside 设置/用量账本,
- * matching the shell's footer-seat geometry — and, when toggled, takes over
- * the center column with a file list + editor panel backed by /api/dsh-memory.
- * The row is plain DOM with a self-healing MutationObserver (task-board /
- * dsh-ssh precedent), so it can never disturb the shell's React
- * reconciliation. Failure policy: mount problems are logged, never thrown.
+ * Settings-section client: registers “全局记忆” as a first-level DSH Settings
+ * item and renders its file list + editor panel through the official
+ * `settings.section` slot. File actions use plain DOM only inside the React
+ * section root, so they never interfere with the shell's reconciliation.
  */
 window.__ModuleLoader__.load({
   // Must match the package name used by DSH's client-module loader.
@@ -17,29 +14,20 @@ window.__ModuleLoader__.load({
     var exports = module.exports
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
+    const React = require('react')
+    const h = React.createElement
+    const useEffect = React.useEffect
+    const useRef = React.useRef
+
     const API = {
       files: '/api/dsh-memory/files',
       file: '/api/dsh-memory/file',
     }
     const GLOBAL_KEY = '__global__'
-    const ENTRY_SELECTOR = '[data-dsh-memory-entry]'
-    const VIEW_SELECTOR = '[data-dsh-memory-view]'
-    const CONVERSATION_COLUMN_SELECTOR = '[data-pane="conversation"], [class*="centerCol"]'
-    const ACTIVE_ATTR = 'data-dsh-memory-active'
-    const OTHER_ACTIVE_ATTRS = ['data-dsh-taskboard-active', 'data-dsh-ssh-active']
-    const ACTIVATE_EVENT = 'dsh-panel-activate'
-    const PANEL_NAME = 'memory'
-    const SIDEBAR_ROW_SELECTOR = '[class*="sessionRow"], [class*="projectRow"], [class*="searchResultRow"], [class*="searchResultWorkspace"], [class*="newSession"]'
 
-    // Official @deepseek-ai/dsh-client-ui-primitives `IconListPenOutline16`:
-    // a filled 16×16 notepad+pen glyph (fill="currentColor"), the same icon
-    // language the shell's footer seats use, so size/weight/colour match
-    // 用量账本/设置 exactly. Paths copied verbatim from the primitives bundle.
-    const ICON = '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M10.8239 3.54733V4.78443H4.63437V3.54733H10.8239Z"/><path d="M10.8239 6.12629V7.36338H4.63437V6.12629H10.8239Z"/><path d="M9.073 8.70524V9.94234H4.63437V8.70524H9.073Z"/><path d="M9.13321 0.573526C10.0076 0.573525 10.7179 0.572522 11.285 0.63397C11.8645 0.696791 12.3743 0.831648 12.8193 1.1548C13.0776 1.34246 13.3056 1.57047 13.4933 1.82875C13.8164 2.2737 13.9513 2.7836 14.0141 3.36303C14.0755 3.93015 14.0745 4.64049 14.0745 5.51485V6.1757L12.7327 7.5629V5.51485C12.7327 4.61092 12.732 3.9862 12.6803 3.5081C12.6298 3.0427 12.5379 2.79497 12.4083 2.61654C12.3033 2.47211 12.176 2.34472 12.0315 2.23977C11.8531 2.11016 11.6054 2.01823 11.14 1.96777C10.6618 1.91601 10.0372 1.91539 9.13321 1.91539H6.32658C5.42262 1.91539 4.79796 1.91604 4.31983 1.96777C3.85451 2.01819 3.60672 2.11029 3.42827 2.23977C3.28392 2.34465 3.15643 2.47223 3.0515 2.61654C2.9219 2.79496 2.82997 3.04274 2.7795 3.5081C2.72774 3.9862 2.72712 4.61092 2.72712 5.51485V10.023C2.72712 10.9273 2.72773 11.5525 2.7795 12.0307C2.82992 12.4959 2.92205 12.7429 3.0515 12.9213C3.15645 13.0657 3.28384 13.1931 3.42827 13.2981C3.60676 13.4277 3.85408 13.5206 4.31983 13.5711C4.79797 13.6228 5.42259 13.6234 6.32658 13.6234H6.87057L5.57707 14.9593C5.03527 14.9556 4.57031 14.9467 4.17476 14.9039C3.59508 14.841 3.08558 14.7063 2.64048 14.383C2.38215 14.1953 2.15422 13.9684 1.96653 13.7101C1.64319 13.2649 1.50851 12.7546 1.4457 12.1748C1.38432 11.6076 1.38525 10.8974 1.38525 10.023V5.51485C1.38525 4.64049 1.38426 3.93015 1.4457 3.36303C1.50853 2.78363 1.64341 2.27368 1.96653 1.82875C2.15417 1.57059 2.38228 1.34239 2.64048 1.1548C3.08544 0.831805 3.59533 0.696762 4.17476 0.63397C4.74193 0.572552 5.45218 0.573525 6.32658 0.573526H9.13321Z"/><path d="M14.2193 14.9553H10.0124L11.3744 13.6134H14.2193V14.9553Z"/><path d="M8.24493 13.3711L7.49015 14.8806C7.40148 15.058 7.58961 15.2461 7.76695 15.1574L9.27651 14.4027L14.6147 9.09934L13.5832 8.06775L8.24493 13.3711Z"/></svg>'
 
     // -------------------------------------------------------------- state
     const state = {
-      open: false,
       files: [],
       currentKey: null,
       original: '',
@@ -47,10 +35,7 @@ window.__ModuleLoader__.load({
       loading: false,
       message: '',
     }
-    const listeners = new Set()
-    function notify() {
-      for (const fn of [...listeners]) fn()
-    }
+    const settingsRoots = new Set()
 
     // ---------------------------------------------------------- api calls
     async function fetchJson(url, options) {
@@ -116,7 +101,7 @@ window.__ModuleLoader__.load({
 
     async function saveFile() {
       if (state.currentKey === null) return
-      const editor = document.querySelector(VIEW_SELECTOR + ' textarea')
+      const editor = [...settingsRoots].map((root) => root.querySelector('textarea')).find((node) => node !== null) ?? null
       const content = editor !== null ? editor.value : ''
       state.loading = true
       state.message = ''
@@ -184,34 +169,28 @@ window.__ModuleLoader__.load({
       style.id = 'dsh-memory-styles'
       style.setAttribute('data-plugin', 'dsh-memory')
       style.textContent = `
-.dshm-entry { box-sizing: border-box; flex: 0 0 100%; min-width: 0; width: 100%; height: 42px; margin: 8px 0 0; padding: 0 10px 0 8px; border: 0; border-radius: 12px; background: transparent; color: var(--dsw-alias-label-primary); font-family: inherit; font-size: 14px; line-height: 22px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; overflow: hidden; text-align: left; }
-.dshm-entry:hover, .dshm-entry[data-active="true"] { background: var(--dsw-alias-interactive-bg-hover); }
-.dshm-entryIcon { flex: none; display: inline-flex; align-items: center; }
-.dshm-entryLabel { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.dshm-entry.dshm-rail { width: 36px; height: 36px; margin: 8px 0 10px; padding: 0; border-radius: 50%; justify-content: center; gap: 0; }
-.dshm-entry.dshm-rail .dshm-entryLabel { display: none; }
-.dshm-view { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); z-index: 5; }
-html[data-dsh-memory-active] [data-pane="conversation"] > :not([data-dsh-memory-view]),
-html[data-dsh-memory-active] [class*="centerCol"] > :not([data-dsh-memory-view]) { display: none !important; }
-.dshm-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--dsw-alias-border-l2); flex: none; }
-.dshm-barTitle { font-size: 13px; font-weight: 600; }
+.dshm-settingsRoot { min-width: 0; }
+.dshm-settingsPanel { display: flex; flex-direction: column; min-height: 520px; color: var(--dsw-alias-label-primary); }
+.dshm-bar { display: flex; align-items: flex-start; gap: 12px; padding: 4px 0 16px; flex: none; }
+.dshm-barTitle { font-size: 18px; font-weight: 600; line-height: 1.35; }
+.dshm-barDesc { margin-top: 3px; color: var(--dsw-alias-label-tertiary); font-size: 13px; line-height: 1.45; }
 .dsvm-barSpacer { flex: 1; }
-.dshm-footer { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--dsw-alias-border-l2); flex: none; }
+.dshm-footer { display: flex; align-items: center; gap: 8px; padding: 12px 0 0; border-top: 1px solid var(--dsw-alias-border-l2); flex: none; }
 .dshm-footerSpacer { flex: 1; }
 .dshm-btn { padding: 4px 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 7px; background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; cursor: pointer; }
 .dshm-btn:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .dshm-btn:disabled { opacity: 0.5; cursor: default; }
 .dshm-btnPrimary { background: var(--dsw-alias-button-info-fill); border-color: transparent; color: var(--dsw-alias-label-primary-foreground); }
 .dshm-btnPrimary:hover { background: var(--dsw-alias-button-info-hover); opacity: 1; }
-.dshm-body { display: flex; flex: 1; min-height: 0; }
-.dshm-list { width: 210px; flex: none; overflow-y: auto; border-right: 1px solid var(--dsw-alias-border-l2); padding: 6px; }
+.dshm-body { display: flex; flex: 1; min-height: 420px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; overflow: hidden; }
+.dshm-list { width: 220px; flex: none; overflow-y: auto; border-right: 1px solid var(--dsw-alias-border-l2); padding: 8px; background: var(--dsw-alias-bg-module-platform); }
 .dshm-item { display: block; width: 100%; padding: 7px 9px; margin: 2px 0; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .dshm-item:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .dshm-item[data-current="true"] { background: var(--dsw-alias-interactive-bg-active); }
 .dshm-itemTitle { font-size: 13px; font-weight: 600; }
 .dshm-itemMeta { font-size: 11px; color: var(--dsw-alias-label-tertiary); margin-top: 2px; }
 .dshm-editorCol { display: flex; flex-direction: column; flex: 1; min-width: 0; }
-.dshm-meta { display: flex; align-items: center; gap: 10px; padding: 5px 12px; border-bottom: 1px solid var(--dsw-alias-border-l2); font-size: 12px; color: var(--dsw-alias-label-secondary); flex: none; }
+.dshm-meta { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--dsw-alias-border-l2); font-size: 12px; color: var(--dsw-alias-label-secondary); flex: none; }
 .dshm-dirty { color: var(--dsw-alias-state-warn-primary); opacity: 1; }
 .dshm-textarea { flex: 1; width: 100%; resize: none; border: 0; outline: none; padding: 12px 14px; font-family: var(--ds-font-family-code, Menlo, Consolas, monospace); font-size: 12.5px; line-height: 1.6; background: transparent; color: inherit; }
 .dshm-empty { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--dsw-alias-label-tertiary); font-size: 13px; }
@@ -222,6 +201,7 @@ html[data-dsh-memory-active] [class*="centerCol"] > :not([data-dsh-memory-view])
 .dshm-modalInput { color: var(--dsw-alias-label-primary); background: var(--dsw-specific-input-major); border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; outline: none; padding: 7px 10px; font: inherit; font-size: 13px; }
 .dshm-modalInput:focus { border-color: var(--dsw-alias-state-business-primary); }
 .dshm-modalBtns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+@media (max-width: 640px) { .dshm-settingsPanel { min-height: 420px; } .dshm-body { min-height: 360px; } .dshm-list { width: 156px; } }
 `
       document.head.append(style)
     }
@@ -293,12 +273,20 @@ html[data-dsh-memory-active] [class*="centerCol"] > :not([data-dsh-memory-view])
 
     function renderPanel(container) {
       container.replaceChildren()
-      // top bar (title only — right side is left clear to avoid colliding with
-      // other plugins' fixed top-right buttons, e.g. dsh-better-sidebar)
+      const panel = el('section', 'dshm-settingsPanel')
       const bar = el('div', 'dshm-bar')
-      bar.append(el('div', 'dshm-barTitle', '全局记忆'))
+      const title = el('div', 'dshm-barTitle', '全局记忆')
+      const heading = el('div')
+      heading.append(title, el('div', 'dshm-barDesc', '管理适用于所有会话的全局指令与长期记忆。'))
+      bar.append(heading)
       bar.append(el('div', 'dsvm-barSpacer'))
-      container.append(bar)
+      const refreshBtn = el('button', 'dshm-btn', '刷新')
+      refreshBtn.addEventListener('click', () => { loadFiles().catch((e) => { state.message = '刷新失败：' + e.message; render() }) })
+      bar.append(refreshBtn)
+      const newBtn = el('button', 'dshm-btn', '新建')
+      newBtn.addEventListener('click', () => { createFile() })
+      bar.append(newBtn)
+      panel.append(bar)
       // body
       const body = el('div', 'dshm-body')
       const list = el('div', 'dshm-list')
@@ -344,191 +332,62 @@ html[data-dsh-memory-active] [class*="centerCol"] > :not([data-dsh-memory-view])
         editorCol.append(el('div', 'dshm-empty', '选择左侧文件查看与编辑'))
       }
       body.append(editorCol)
-      container.append(body)
+      panel.append(body)
       // bottom operation bar
       const footer = el('div', 'dshm-footer')
-      const refreshBtn = el('button', 'dshm-btn', '刷新')
-      refreshBtn.addEventListener('click', () => { loadFiles().catch((e) => { state.message = '刷新失败：' + e.message; render() }) })
-      footer.append(refreshBtn)
-      const newBtn = el('button', 'dshm-btn', '新建')
-      newBtn.addEventListener('click', () => { createFile() })
-      footer.append(newBtn)
       footer.append(el('div', 'dshm-footerSpacer'))
       const saveBtn = el('button', 'dshm-btn dshm-btnPrimary', '保存')
       saveBtn.disabled = state.loading || state.currentKey === null
       saveBtn.addEventListener('click', () => { saveFile() })
       footer.append(saveBtn)
-      const closeBtn = el('button', 'dshm-btn', '关闭')
-      closeBtn.addEventListener('click', () => { setOpen(false) })
-      footer.append(closeBtn)
-      container.append(footer)
+      panel.append(footer)
+      container.append(panel)
     }
 
     function render() {
-      const container = document.querySelector(VIEW_SELECTOR)
-      if (container !== null) renderPanel(container)
+      for (const root of settingsRoots) renderPanel(root)
     }
 
-    // ------------------------------------------------------------ open/close
-    function setOpen(open) {
-      if (state.open === open) return
-      state.open = open
-      if (open) {
-        for (const attr of OTHER_ACTIVE_ATTRS) document.documentElement.removeAttribute(attr)
-        document.documentElement.setAttribute(ACTIVE_ATTR, '')
-        document.dispatchEvent(new CustomEvent(ACTIVATE_EVENT, { detail: PANEL_NAME }))
+    // ------------------------------------------------------ settings section
+    function MemorySettingsSection() {
+      const rootRef = useRef(null)
+      useEffect(() => {
+        const root = rootRef.current
+        if (root === null) return undefined
+        ensureStyles()
+        settingsRoots.add(root)
+        renderPanel(root)
         loadFiles().catch((error) => { state.message = '加载失败：' + error.message; render() })
-      } else {
-        document.documentElement.removeAttribute(ACTIVE_ATTR)
-      }
-      syncEntryActive()
-      notify()
-    }
-
-    // --------------------------------------------------------- sidebar entry
-    // The official sidebar pins its footer seats to the bottom of the column:
-    // `sidebar.footer.action` (用量账本 / 插件面板) above `sidebar.settings`
-    // (设置). Appending here renders the entry at the bottom, stacked as a
-    // full-width row exactly like those seats. The slot container is
-    // `display:contents`, so the entry becomes a flex item of the wrapping
-    // footer row — same geometry as the other occupants.
-    function footerSeat() {
-      const slot = document.querySelector('[data-slot="sidebar.footer.action"]')
-      if (slot !== null) return slot
-      const foot = document.querySelector('[class*="footArea"]')
-      if (foot !== null) return foot
-      return undefined
-    }
-
-    function placeEntry(entry) {
-      const seat = footerSeat()
-      if (seat === undefined) return false
-      if (entry.parentElement !== seat) seat.append(entry)
-      return true
-    }
-
-    let entryElement = null
-    function syncEntryActive() {
-      if (entryElement === null) return
-      if (state.open) entryElement.dataset.active = 'true'
-      else delete entryElement.dataset.active
-    }
-
-    function mountSidebarEntry() {
-      if (document.querySelector(ENTRY_SELECTOR) !== null) return () => {}
-      ensureStyles()
-      const entry = document.createElement('button')
-      entry.type = 'button'
-      entry.setAttribute('data-dsh-memory-entry', '')
-      entry.setAttribute('data-dsh-plugin', 'memory')
-      entry.setAttribute('data-dsh-part', 'sidebar-entry')
-      entry.className = 'dshm-entry'
-      entry.setAttribute('aria-label', '全局记忆')
-      entry.setAttribute('title', '查看/编辑全局指令与跨会话记忆')
-      entry.innerHTML = '<span class="dshm-entryIcon">' + ICON + '</span><span class="dshm-entryLabel">全局记忆</span>'
-      entry.addEventListener('click', () => { setOpen(!state.open) })
-      entryElement = entry
-      let placed = false
-      let railObserver = undefined
-
-      // Collapsed sidebar narrows to a 56px rail and every bottom control
-      // becomes a 36px circle (设置 / 用量账本 / 插件面板). Mirror that by
-      // watching the column width and toggling a rail class on the entry.
-      const applyRail = () => {
-        const column = document.querySelector('[data-pane="sidebar"], [class*="sidebarCol"]')
-        const rail = column !== null && column.getBoundingClientRect().width <= 80
-        entry.classList.toggle('dshm-rail', rail)
-      }
-      const tryPlace = () => {
-        if (placed && document.body.contains(entry)) return
-        placed = placeEntry(entry)
-        if (placed && railObserver === undefined && typeof ResizeObserver !== 'undefined') {
-          const column = document.querySelector('[data-pane="sidebar"], [class*="sidebarCol"]')
-          if (column !== null) {
-            railObserver = new ResizeObserver(applyRail)
-            railObserver.observe(column)
-            applyRail()
-          }
-        }
-      }
-      const waitObserver = new MutationObserver(() => { tryPlace() })
-      waitObserver.observe(document.body, { childList: true, subtree: true })
-      tryPlace()
-      syncEntryActive()
-
-      return () => {
-        waitObserver.disconnect()
-        if (railObserver !== undefined) railObserver.disconnect()
-        entry.remove()
-        entryElement = null
-      }
-    }
-
-    // --------------------------------------------------------- center panel
-    function mountPanel() {
-      let container = undefined
-
-      const ensure = () => {
-        if (container !== undefined && container.isConnected) return
-        const column = document.querySelector(CONVERSATION_COLUMN_SELECTOR)
-        if (column === null) return
-        column.style.position = column.style.position === '' ? 'relative' : column.style.position
-        container = el('div', 'dshm-view')
-        container.setAttribute('data-dsh-memory-view', '')
-        container.setAttribute('data-dsh-plugin', 'memory')
-        container.style.display = state.open ? 'flex' : 'none'
-        column.append(container)
-        renderPanel(container)
-      }
-      const waitObserver = new MutationObserver(() => { ensure() })
-      waitObserver.observe(document.body, { childList: true, subtree: true })
-
-      const applyVisible = () => {
-        if (container !== undefined) container.style.display = state.open ? 'flex' : 'none'
-      }
-      listeners.add(applyVisible)
-
-      const onOtherActivate = (event) => {
-        const detail = event instanceof CustomEvent ? event.detail : undefined
-        if (detail !== undefined && detail !== PANEL_NAME) setOpen(false)
-      }
-      document.addEventListener(ACTIVATE_EVENT, onOtherActivate)
-
-      const onClickSidebarRow = (event) => {
-        if (!state.open) return
-        const target = event.target
-        if (target instanceof HTMLElement && target.closest(SIDEBAR_ROW_SELECTOR) !== null) setOpen(false)
-      }
-      document.addEventListener('click', onClickSidebarRow, true)
-
-      ensure()
-
-      return () => {
-        waitObserver.disconnect()
-        listeners.delete(applyVisible)
-        document.removeEventListener(ACTIVATE_EVENT, onOtherActivate)
-        document.removeEventListener('click', onClickSidebarRow, true)
-        document.documentElement.removeAttribute(ACTIVE_ATTR)
-        container?.remove()
-        container = undefined
-      }
+        return () => { settingsRoots.delete(root) }
+      }, [])
+      return h('div', { ref: rootRef, className: 'dshm-settingsRoot', 'data-dsh-plugin': 'memory' })
     }
 
     // --------------------------------------------------------------- apply
     function apply(ctx) {
-      const disposers = []
-      try {
-        disposers.push(mountSidebarEntry())
-        disposers.push(mountPanel())
-      } catch (error) {
-        console.warn('[dsh-memory] mount failed:', error)
+      if (ctx.slots === undefined) {
+        console.warn('[dsh-memory] settings.section slot is unavailable')
+        return
       }
+      ctx.slots.inject('settings.section', () => {
+        try {
+          return ctx.slots.register({
+            name: 'settings.section',
+            id: 'global-memory',
+            order: 120,
+            label: () => '全局记忆',
+          }, MemorySettingsSection)
+        } catch (error) {
+          console.warn('[dsh-memory] settings registration failed:', error)
+          return () => {}
+        }
+      })
       ctx.effect(() => () => {
-        for (const dispose of disposers.splice(0)) dispose()
-      }, 'dsh-memory: ui mounts')
+        document.getElementById('dsh-memory-styles')?.remove()
+      }, 'dsh-memory: styles')
     }
     exports.apply = apply
-    exports.inject = []
+    exports.inject = ['slots']
     return module.exports
   },
 })

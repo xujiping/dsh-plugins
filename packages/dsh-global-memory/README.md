@@ -2,7 +2,7 @@
 
 > npm 包名即目录名；曾用名 `dsh-memory`（因 npm 重名改为 `dsh-global-memory`，host 路由仍为 `/api/dsh-memory/*`）。
 
-DSH 全局记忆插件：在 dsh Web GUI 侧边栏加「全局记忆」入口，中心面板直接查看/编辑：
+DSH 全局记忆插件：在 dsh Web GUI 的「设置」中新增「全局记忆」选项，直接查看/编辑：
 
 - `~/.dsh/AGENTS.md` —— 全局指令（每个会话自动注入）
 - `~/.dsh/memory/*.md` —— 跨会话动态记忆（prefs / projects / decisions / facts / memory 等）
@@ -26,8 +26,9 @@ DSH 全局记忆插件：在 dsh Web GUI 侧边栏加「全局记忆」入口，
 ## 文件
 
 - `lib/index.js` —— host 半边（路由）
-- `lib/client.js` —— 浏览器半边（侧边栏入口 + 面板）
+- `lib/client.js` —— 浏览器半边（设置一级选项 + 编辑器）
 - `test/smoke.mjs` —— host 路由冒烟测试（`node test/smoke.mjs`）
+- `test/client-smoke.mjs` —— 设置槽位注册冒烟测试（`node test/client-smoke.mjs`）
 
 ## 挂载
 
