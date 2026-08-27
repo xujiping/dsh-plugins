@@ -576,25 +576,29 @@ window.__ModuleLoader__.load({
       })
       const observeFlow = () => {
         const flow = document.querySelector(FLOW_SEL)
+        flowObserver.disconnect()
         if (flow !== null) {
           flowObserver.observe(flow, { childList: true, subtree: true })
-          return true
+        } else {
+          // flow not mounted yet: watch the whole body until it appears
+          flowObserver.observe(document.body, { childList: true, subtree: true })
         }
-        return false
+        const changed = flow !== currentFlow
+        currentFlow = flow
+        return changed
       }
-      if (!observeFlow()) {
-        // flow not mounted yet: watch the whole body until it appears
-        flowObserver.observe(document.body, { childList: true, subtree: true })
-      }
-      // scroller swap / composer mount → rebind listeners + full re-sync.
-      // While a scroller is already bound, DOM churn elsewhere in the body
+      let currentFlow = null
+      observeFlow()
+      // scroller / flow / composer swap → rebind listeners + full re-sync.
+      // While they are already bound, DOM churn elsewhere in the body
       // (streaming!) only needs a light refresh, not a full scan.
       let currentScroller = null
       let currentComposer = null
       const scrollerObserver = new MutationObserver(() => {
+        const flow = document.querySelector(FLOW_SEL)
         const next = findScroller()
         const composer = document.querySelector(COMPOSER_SEL)
-        if (next !== currentScroller || composer !== currentComposer) {
+        if (next !== currentScroller || composer !== currentComposer || flow !== currentFlow) {
           if (currentScroller !== null && currentScroller !== next) {
             currentScroller.removeEventListener('scroll', scheduleLight)
           }
@@ -603,6 +607,9 @@ window.__ModuleLoader__.load({
           }
           currentScroller = next
           currentComposer = composer
+          // flow node was swapped (e.g. new conversation) → re-attach the
+          // flow observer to the live node, otherwise ticks never rebuild
+          observeFlow()
           observeComposer()
           invalidateTargets()
           scheduleRender()
