@@ -59,10 +59,10 @@ window.__ModuleLoader__.load({
   transition: background 0.15s ease, box-shadow 0.15s ease, backdrop-filter 0.15s ease;
 }
 .dsn-rail:hover {
-  background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,0.12));
-  -webkit-backdrop-filter: blur(12px) saturate(1.4);
-  backdrop-filter: blur(12px) saturate(1.4);
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.18), 0 4px 16px rgba(0,0,0,0.10);
+  background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,0.08));
+  -webkit-backdrop-filter: blur(10px) saturate(1.3);
+  backdrop-filter: blur(10px) saturate(1.3);
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l2, rgba(127,127,127,0.16));
 }
 .dsn-rail[data-hidden="true"] { display: none; }
 
@@ -132,10 +132,17 @@ window.__ModuleLoader__.load({
 /* message count chip (bottom of rail, shown on hover) */
 .dsn-count {
   flex: 0 0 auto;
-  height: 12px;
-  line-height: 12px;
-  text-align: center;
-  font-size: 9px;
+  align-self: center;
+  margin: 6px 0 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,0.10));
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l2, rgba(127,127,127,0.14));
+  font-size: 10px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  line-height: 14px;
   font-family: var(--ds-font-family-code, ui-monospace, Menlo, monospace);
   color: var(--dsw-alias-label-tertiary, rgba(127,127,127,0.8));
   opacity: 0;
