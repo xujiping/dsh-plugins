@@ -452,7 +452,6 @@ window.__ModuleLoader__.load({
         const end = Math.min(targets.length, start + 50)
         for (let i = start; i < end; i++) {
           const preview = messagePreview(targets[i].item, targets[i].key)
-          tickCache[i].setAttribute('title', preview)
           tickCache[i].textContent = preview
         }
         if (end < targets.length) requestAnimationFrame(() => fillFrom(end))
