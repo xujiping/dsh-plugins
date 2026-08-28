@@ -59,10 +59,18 @@ window.__ModuleLoader__.load({
   transition: background 0.15s ease, box-shadow 0.15s ease, backdrop-filter 0.15s ease;
 }
 .dsn-rail:hover {
-  background: var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,0.08));
-  -webkit-backdrop-filter: blur(10px) saturate(1.3);
-  backdrop-filter: blur(10px) saturate(1.3);
-  box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l2, rgba(127,127,127,0.16));
+  background: linear-gradient(
+    135deg,
+    rgba(255,255,255,0.14),
+    rgba(255,255,255,0.05) 55%,
+    rgba(255,255,255,0.10)
+  );
+  -webkit-backdrop-filter: blur(18px) saturate(1.8) brightness(1.08);
+  backdrop-filter: blur(18px) saturate(1.8) brightness(1.08);
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,0.22),
+    inset 0 1px 0 rgba(255,255,255,0.28),
+    0 8px 28px rgba(0,0,0,0.18);
 }
 .dsn-rail[data-hidden="true"] { display: none; }
 
