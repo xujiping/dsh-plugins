@@ -28,8 +28,13 @@ export const DEFAULT_MODEL = 'default'
 // `default`（它会随 Claude Code 的内置工具集变化），改为明确列出所需的
 // 工作区工具；MCP 仍由下方的严格空配置隔离。
 export const DEFAULT_TOOLS = Object.freeze(['Bash', 'Read', 'Glob', 'Grep', 'Edit', 'Write'])
+// DSH 的沙箱权限不会约束作为外部进程运行的 `claude`。原生会话只允许
+// 这三个由 Claude Code CLI 自己执行的模式；不要把 Manual、dontAsk 或
+// bypassPermissions 伪装成可以在 DSH 内交互审批的选择。
+export const CLAUDE_PERMISSION_MODES = Object.freeze(['plan', 'acceptEdits', 'auto'])
+export const DEFAULT_PERMISSION_MODE = 'plan'
 const DRIVER = 'claude-code-native'
-const DRIVER_VERSION = 1
+const DRIVER_VERSION = 2
 // 会话列表（dsh-client-ui-workspace）只渲染 displayTitle，不暴露 agent 信息。
 // 原生会话的自动标题落地后加此前缀，列表即可区分该会话由哪个 Agent 驱动。
 // 用 source: 'user' 固定（pin），避免后续 first-prompt 自动标题覆盖掉前缀。
@@ -60,6 +65,18 @@ function ensureNativeRequestHeader(session) {
   session.append('request/context', config)
 }
 
+function permissionModeOf(value) {
+  return CLAUDE_PERMISSION_MODES.includes(value) ? value : DEFAULT_PERMISSION_MODE
+}
+
+function permissionStateOf(entry) {
+  const permissionMode = permissionModeOf(entry?.permissionMode)
+  const effectivePermissionMode = typeof entry?.effectivePermissionMode === 'string'
+    ? entry.effectivePermissionMode
+    : undefined
+  return effectivePermissionMode === undefined ? { permissionMode } : { permissionMode, effectivePermissionMode }
+}
+
 function configOf(raw = {}) {
   const indexPath = raw.indexPath ?? join(homedir(), '.dsh', 'cc-agent-driver', 'sessions.json')
   const command = raw.command ?? 'claude'
@@ -68,8 +85,8 @@ function configOf(raw = {}) {
   if (args.some((arg) => arg === '--dangerously-skip-permissions' || arg === '--allow-dangerously-skip-permissions')) {
     throw new Error('cc-agent-driver: bypass-permissions flags are forbidden')
   }
-  if (args.some((arg, index) => (arg === '--permission-mode' && args[index + 1] === 'bypassPermissions') || arg === '--permission-mode=bypassPermissions')) {
-    throw new Error('cc-agent-driver: permission mode bypassPermissions is forbidden')
+  if (args.some((arg) => arg === '--permission-mode' || arg.startsWith('--permission-mode='))) {
+    throw new Error('cc-agent-driver: --permission-mode is managed per native session; remove it from args')
   }
   return {
     indexPath,
@@ -119,7 +136,7 @@ export class DriverIndex {
   async write(entries) {
     await mkdir(dirname(this.path), { recursive: true })
     const temp = `${this.path}.${process.pid}.${randomUUID()}.tmp`
-    await writeFile(temp, `${JSON.stringify({ version: 1, sessions: entries }, null, 2)}\n`, { mode: 0o600 })
+    await writeFile(temp, `${JSON.stringify({ version: DRIVER_VERSION, sessions: entries }, null, 2)}\n`, { mode: 0o600 })
     await rename(temp, this.path)
   }
   async upsert(entry) {
@@ -138,7 +155,7 @@ export class DriverIndex {
  * exactly one DSH turn, and cancellation always targets that process group.
  */
 export class ClaudeCodeAgent {
-  constructor(rootCtx, id, session, config) {
+  constructor(rootCtx, id, session, config, permission, onEffectivePermissionMode) {
     this.rootCtx = rootCtx
     this.id = id
     this.session = session
@@ -150,6 +167,8 @@ export class ClaudeCodeAgent {
     this.scope = createScope(rootCtx, this)
     this.ctx = this.scope.ctx.extend({ agent: this })
     this.config = config
+    this.permission = permission
+    this.onEffectivePermissionMode = onEffectivePermissionMode
     this.pending = []
     this.injected = []
     this.current = undefined
@@ -212,6 +231,9 @@ export class ClaudeCodeAgent {
       '--output-format', 'stream-json',
       '--include-partial-messages',
       '--verbose',
+      // Claude CLI 的 --resume 不会可靠继承先前 -p 运行的权限模式，
+      // 因此每轮都从 driver sidecar 显式传入当前会话选择。
+      '--permission-mode', this.permission.permissionMode,
       ...(this.config.safeMode ? ['--safe-mode'] : []),
       // Claude's --tools limits only built-ins. The strict empty MCP config is
       // required as well, otherwise user-level MCP servers remain available.
@@ -219,6 +241,12 @@ export class ClaudeCodeAgent {
       '--mcp-config', '{"mcpServers":{}}',
       ...tools,
     ]
+  }
+  observeEffectivePermissionMode(value) {
+    if (typeof value !== 'string' || value.length === 0) return
+    if (this.permission.effectivePermissionMode === value) return
+    this.permission.effectivePermissionMode = value
+    void this.onEffectivePermissionMode?.(value)
   }
   async runTurn(message) {
     const turn = ++this.turn
