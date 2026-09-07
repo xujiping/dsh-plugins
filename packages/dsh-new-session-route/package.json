@@ -1,0 +1,53 @@
+{
+  "name": "dsh-new-session-route",
+  "version": "0.1.2",
+  "description": "DSH 新会话路由插件：点击侧边栏「新会话」弹出下拉，选择新会话的后端路由 —— 默认 DeepSeek Harness 或 Claude Code（经 dst-gateway provider）。纯 client DOM 注入 + cordis client API，不改 DSH 源码。",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "claude-code",
+    "new-session",
+    "model-route"
+  ],
+  "author": "xujiping",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xujiping/dsh-plugins.git",
+    "directory": "packages/dsh-new-session-route"
+  },
+  "homepage": "https://github.com/xujiping/dsh-plugins/tree/main/packages/dsh-new-session-route",
+  "bugs": {
+    "url": "https://github.com/xujiping/dsh-plugins/issues"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "connection",
+        "sessions",
+        "workspaces",
+        "locale"
+      ],
+      "platform": "web"
+    }
+  },
+  "license": "MIT",
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ]
+}
