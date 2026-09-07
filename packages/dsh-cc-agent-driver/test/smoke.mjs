@@ -11,7 +11,7 @@ import LlmRuntime from '/Users/xujiping/.dsh/profiles/node_modules/@deepseek-ai/
 import { createUserMessage } from '/Users/xujiping/.dsh/profiles/node_modules/@deepseek-ai/dsh-llm/lib/index.js'
 import TypertRegistry from '/Users/xujiping/.dsh/profiles/node_modules/@deepseek-ai/dsh-typert-registry/lib/index.js'
 import TypertGatewayService from '/Users/xujiping/.dsh/profiles/node_modules/@deepseek-ai/dsh-api-gateway/lib/index.js'
-import { ClaudeCodeDriverGateway, CLAUDE_PROVIDER, DEFAULT_MODEL, DriverIndex } from '../lib/index.js'
+import { ClaudeCodeDriverGateway, CLAUDE_PROVIDER, DEFAULT_MODEL, DEFAULT_TOOLS, DriverIndex } from '../lib/index.js'
 import TYPERT from '../lib/typert.js'
 import REMOTE from '../lib/remote.js'
 
@@ -62,8 +62,10 @@ const gateway = new ClaudeCodeDriverGateway(ctx, {
   command: process.execPath,
   args: [join(here, 'fake-claude.js')],
   indexPath,
-  tools: [],
 })
+assert.deepEqual(DEFAULT_TOOLS, ['Bash', 'Read', 'Glob', 'Grep', 'Edit', 'Write'])
+assert.deepEqual(gateway.config.tools, DEFAULT_TOOLS, 'native Claude sessions enable the standard workspace tool set by default')
+assert.equal(gateway.config.securityProfile, 'workspace-tools')
 ctx.llm.registerAdapter([CLAUDE_PROVIDER], {
   providerInfo: (id) => ({ id, name: id }),
   providerRetryPolicy: () => undefined,
@@ -96,6 +98,10 @@ assert.deepEqual(agent.session.requestHeader()?.config, {
   provider: CLAUDE_PROVIDER,
   model: DEFAULT_MODEL,
 }, 'native route is session-local from creation; no global model selection RPC is needed')
+const startupArgs = agent.commandArgs(true)
+assert.equal(startupArgs[startupArgs.indexOf('--tools') + 1], DEFAULT_TOOLS.join(','), 'Claude CLI receives the enabled workspace tools')
+assert.ok(startupArgs.includes('--safe-mode'), 'safe mode remains enabled with the workspace tools')
+assert.ok(startupArgs.includes('--strict-mcp-config'), 'MCP isolation remains enabled with the workspace tools')
 
 // A native Agent's Context must be scope-isolated. Otherwise API-proxy's
 // agent/session-start setup installs its model-selection listener globally and
@@ -124,6 +130,20 @@ const assistantMessages = agent.session.events.filter((event) => event.type === 
 assert.equal(assistantMessages.at(-1).data.message.source.model, 'fake-runtime-model')
 assert.deepEqual(assistantMessages.at(-1).data.usage, { inputTokens: 10, outputTokens: 3 })
 
+// Automatic titles (first-prompt fallback) of native sessions must be pinned
+// with the agent prefix so the workspace session list shows the agent name.
+agent.session.append('session/title', { title: '帮我修一个 bug', messageSeqs: [3], source: { kind: 'fallback' } })
+await new Promise((resolve) => queueMicrotask(resolve))
+const titleEvents = agent.session.events.filter((event) => event.type === 'session/title')
+assert.equal(titleEvents.at(-1).data.title, 'Claude Code · 帮我修一个 bug', 'fallback title is prefixed for the session list')
+assert.equal(titleEvents.at(-1).data.source.kind, 'user', 'prefixed title is pinned so later auto titles cannot strip the agent name')
+agent.session.append('session/title', { title: 'user rename', messageSeqs: [], source: { kind: 'user' } })
+const titlesAfterUserRename = agent.session.events.filter((event) => event.type === 'session/title').map((event) => event.data.title)
+agent.session.append('session/title', { title: 'later fallback', messageSeqs: [9], source: { kind: 'fallback' } })
+await new Promise((resolve) => queueMicrotask(resolve))
+const finalTitles = agent.session.events.filter((event) => event.type === 'session/title').map((event) => event.data.title)
+assert.deepEqual(finalTitles, [...titlesAfterUserRename, 'later fallback'], 'user renames are respected verbatim; later auto titles are not re-prefixed')
+
 const stored = JSON.parse(await readFile(indexPath, 'utf8'))
 assert.equal(stored.sessions[0].sessionId, sessionId)
 assert.equal(stored.sessions[0].driver, 'claude-code-native')
@@ -150,4 +170,9 @@ await restoringGateway.restore()
 const restored = restoreCtx.agents.get(sessionId)
 assert.ok(restored, 'sidecar entry restores a live custom agent')
 assert.equal(restored.options.provider, CLAUDE_PROVIDER)
-console.log('PASS atomic lifecycle, strict Remote descriptor, JSONL event translation, sidecar index')
+// Restored native sessions also pin prefixed titles for new automatic titles.
+restored.session.append('session/title', { title: 'restored topic', messageSeqs: [1], source: { kind: 'provider' } })
+await new Promise((resolve) => queueMicrotask(resolve))
+const restoredTitles = restored.session.events.filter((event) => event.type === 'session/title').map((event) => event.data.title)
+assert.deepEqual(restoredTitles, ['restored topic', 'Claude Code · restored topic'], 'restored agent pins the agent-name prefix')
+console.log('PASS atomic lifecycle, strict Remote descriptor, JSONL event translation, sidecar index, agent-name title prefix')

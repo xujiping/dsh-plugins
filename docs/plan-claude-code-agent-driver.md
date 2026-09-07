@@ -141,8 +141,8 @@ stdout 的增量不是顶层 `assistant`：它是 `type: "stream_event"` 包裹�
 
 M0/M1 不允许 `bypassPermissions` 或 `--dangerously-skip-permissions`。同时：
 
-- 使用 `--tools` 提供经审查的最小工具集合；首版只开放只读工具，写入和 Bash 另行显式启用；
-- **`--tools` 不会禁用用户 MCP。**真实采样中即使传入 `--tools Read,Glob,Grep`，仍列出了用户 MCP 工具。首版固定增加 `--strict-mcp-config --mcp-config '{"mcpServers":{}}'`，实测 `system/init.tools` 只剩 `Glob`、`Grep`、`Read` 且 `mcp_servers: []`；
+- 使用 `--tools` 提供经审查的工作区工具集合。默认明确开放 `Bash`、`Read`、`Glob`、`Grep`、`Edit`、`Write`，让原生 Claude Code 能完成常规代码任务；如需只读会话，可通过插件 `tools` 配置显式改为 `Read,Glob,Grep`。不使用 `default`，避免 Claude CLI 升级后静默扩大工具面；
+- **`--tools` 不会禁用用户 MCP。**真实采样中即使传入 `--tools Read,Glob,Grep`，仍列出了用户 MCP 工具。首版固定增加 `--strict-mcp-config --mcp-config '{"mcpServers":{}}'`，实测 MCP 列表为空；
 - 默认使用 `--safe-mode`，它会关闭 CLAUDE.md、skills、plugins、hooks、MCP、定制命令等自定义项。不能使用 `--bare` 作为默认，因为它可能改变当前 ccswitch/认证读取方式；
 - 把 Claude CLI 作为外部进程，不假设 DSH sandbox 会自动约束它；
 - 启动独立进程组。取消先发 SIGINT，短暂宽限后升级终止整组，防止 Bash 或 subagent 遗留。
@@ -210,7 +210,7 @@ turn/end
 ### M1 — 安全可聊 MVP（4–6 天）
 
 - 串行 turn 队列、完整用户/助手事件、文本和 reasoning 流、明确错误卡；
-- 只读工具策略与进程组取消；
+- 受限工作区工具策略与进程组取消；
 - 通用 Claude 工具活动卡；
 - 单元测试：JSONL → DSH 事件的表驱动测试，含 surface / callId / event order；
 - 集成测试：fake CLI 与真实 session persistence。
@@ -238,13 +238,13 @@ turn/end
 - 单元：JSONL 解析、事件顺序、surface metadata、callId 配对、错误与取消、UUID 映射。
 - 集成：fake CLI；真实 Claude CLI 的手工无副作用样本；重启恢复；CLI 缺失、登录失效、非零退出、超时和孤儿进程。
 - 回归：`packages/dsh-new-session-route/test/smoke.mjs` 与 `packages/dsh-llm-agent-bridge/test/{smoke,integration}.mjs` 保持通过；当前两个包没有 npm `test` 脚本，新包必须提供标准测试脚本。
-- 发布前人工验证：一轮只读工具任务、一次取消、一次刷新、一次 Host 重启，以及一次拒绝写入/危险命令的策略验证。
+- 发布前人工验证：一轮 `Bash` 代码任务、一次取消、一次刷新、一次 Host 重启，以及一次权限拒绝/危险命令的策略验证。
 
 ## 8. 最终决策
 
 推荐推进 M1，但采用以下默认决策：
 
-1. 不启用 bypass permissions；先做只读能力。
+1. 不启用 bypass permissions；工具面显式限定为受控的工作区开发工具集。
 2. 同一 UUID 绑定 DSH 与 Claude 会话，禁止用户同时从终端恢复该 UUID；检测到分叉即停止自动续接。
 3. subagent 首版仅展示为父会话活动，不创建 DSH 子会话。
 4. 不以“默认 loop 冷恢复”为降级方案；无法恢复时宁可明确报错并保留只读历史。

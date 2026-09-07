@@ -24,8 +24,34 @@ export const inject = ['agents', 'sessions', 'sessionPersistence', 'workspaceReg
 
 export const CLAUDE_PROVIDER = 'claude-code-native'
 export const DEFAULT_MODEL = 'default'
+// Claude Code 会话需要完成实际的工程任务，而不只是浏览文件。不要使用
+// `default`（它会随 Claude Code 的内置工具集变化），改为明确列出所需的
+// 工作区工具；MCP 仍由下方的严格空配置隔离。
+export const DEFAULT_TOOLS = Object.freeze(['Bash', 'Read', 'Glob', 'Grep', 'Edit', 'Write'])
 const DRIVER = 'claude-code-native'
 const DRIVER_VERSION = 1
+// 会话列表（dsh-client-ui-workspace）只渲染 displayTitle，不暴露 agent 信息。
+// 原生会话的自动标题落地后加此前缀，列表即可区分该会话由哪个 Agent 驱动。
+// 用 source: 'user' 固定（pin），避免后续 first-prompt 自动标题覆盖掉前缀。
+export const AGENT_TITLE_PREFIX = 'Claude Code · '
+
+function lastTitleEvent(session) {
+  return session.events.findLast((event) => event.type === 'session/title')
+}
+
+function prefixTitleEvent(session, data) {
+  if (typeof data?.title !== 'string') return
+  // 用户手动命名的标题（source 'user'）是明确意图：既不加前缀，也视为 pin，
+  // 之后任何自动标题都不再被改写成带前缀的版本（含本驱动写入的固定标题）。
+  if (data.source?.kind === 'user') return
+  if (session.events.some((event) => event.type === 'session/title' && event.data.source?.kind === 'user')) return
+  if (data.title.startsWith(AGENT_TITLE_PREFIX)) return
+  session.append('session/title', {
+    title: `${AGENT_TITLE_PREFIX}${data.title}`,
+    messageSeqs: Array.isArray(data.messageSeqs) ? [...data.messageSeqs] : [],
+    source: { kind: 'user' },
+  })
+}
 
 function ensureNativeRequestHeader(session) {
   if (session.requestHeader() !== undefined) return
@@ -37,7 +63,7 @@ function ensureNativeRequestHeader(session) {
 function configOf(raw = {}) {
   const indexPath = raw.indexPath ?? join(homedir(), '.dsh', 'cc-agent-driver', 'sessions.json')
   const command = raw.command ?? 'claude'
-  const tools = Array.isArray(raw.tools) ? raw.tools.map(String) : ['Read', 'Glob', 'Grep']
+  const tools = Array.isArray(raw.tools) ? raw.tools.map(String) : [...DEFAULT_TOOLS]
   const args = Array.isArray(raw.args) ? raw.args.map(String) : []
   if (args.some((arg) => arg === '--dangerously-skip-permissions' || arg === '--allow-dangerously-skip-permissions')) {
     throw new Error('cc-agent-driver: bypass-permissions flags are forbidden')
@@ -50,7 +76,7 @@ function configOf(raw = {}) {
     command,
     args,
     tools,
-    securityProfile: raw.securityProfile ?? 'read-only',
+    securityProfile: raw.securityProfile ?? 'workspace-tools',
     safeMode: raw.safeMode !== false,
   }
 }
@@ -427,6 +453,21 @@ export class ClaudeCodeDriverGateway extends TypertRemoteService {
     ctx.effect(() => () => {
       for (const handle of [...this.handles.values()]) void handle.dispose()
     }, 'cc-agent-driver: dispose published sessions')
+    // Native sessions have no LLM route the title provider can stream, so they
+    // only ever receive the deterministic first-prompt fallback title. Prefix
+    // that title (pinned as a user title) so the workspace session list shows
+    // which agent drives the conversation.
+    ctx.on('session/event', (session, event) => {
+      if (event.type !== 'session/title' || !this.handles.has(session.id)) return
+      const data = event.data
+      // Session.append 不可重入（观察者分发期间 entry.appending 置位），补写
+      // 固定标题必须推迟到当前 append 发布完成之后。
+      queueMicrotask(() => {
+        if (!this.handles.has(session.id)) return
+        if (this.ctx.sessions.get(session.id) !== session) return
+        prefixTitleEvent(session, data)
+      })
+    })
   }
   async createSession(workspaceId) {
     const workspace = this.ctx.workspaceRegistry.get(workspaceId)
@@ -487,6 +528,10 @@ export class ClaudeCodeDriverGateway extends TypertRemoteService {
       detachAgent = this.ctx.agents.enter(agent, this.ctx.agent)
       agent.ctx.sessions.announce(session)
       this.ctx.agents.announce(agent)
+      // Backfill sessions restored from older builds: their stored title (if
+      // any) predates the prefix listener, so re-pin it with the prefix.
+      const stored = lastTitleEvent(session)
+      if (stored !== undefined) prefixTitleEvent(session, stored.data)
       emitAgentEvent(this.ctx, agent, 'agent/session-start', { source })
       const handle = { agent, dispose }
       this.handles.set(session.id, handle)
