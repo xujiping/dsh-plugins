@@ -53,6 +53,33 @@ window.__ModuleLoader__.load({
     }
 
     const WALK_SPEED = 42 // px per second
+    const WALK_RANGE = 150 // px — wander radius around the pet's home anchor
+
+    // Blocked zones: UI the pet must never sit on top of (composer etc.).
+    function blockedRects() {
+      const rects = []
+      document.querySelectorAll('[data-composer-seat], textarea, form input[type="text"]').forEach((el) => {
+        if (!(el instanceof HTMLElement)) return
+        if (el.offsetParent === null) return // hidden
+        rects.push(el.getBoundingClientRect())
+      })
+      return rects
+    }
+
+    /** Push a position (top-left of the 72x84 pet box) out of blocked rects. */
+    function avoidBlocked(x, y) {
+      const w = 72, h = 84
+      for (const r of blockedRects()) {
+        if (x < r.right && x + w > r.left && y < r.top && y + h > r.top) {
+          // overlapping from above: prefer sitting on top of the zone
+          y = r.top - h - 4
+          // if that leaves the screen, fall back to below the zone
+          if (y < 0) y = r.bottom + 4
+          x = Math.min(Math.max(x, r.left), Math.max(0, r.right - w))
+        }
+      }
+      return { x, y }
+    }
 
     // ---------------------------------------------------------------- state
     const state = {
@@ -60,6 +87,8 @@ window.__ModuleLoader__.load({
       actionUntil: 0,        // timestamp when the current action expires
       actionTimer: 0,        // setTimeout id for one-shot / wander switching
       x: 0, y: 0,            // pet position (top-left of the pet box)
+      home: { x: 0, y: 0 },  // wander anchor — pet stays within WALK_RANGE of it
+      walkTarget: null,      // {x, y} current stroll destination, null = none
       dir: 1,                // 1 = facing right, -1 = left
       dragging: false,
       sessionBusyUntil: 0,   // last time we saw streaming / tool activity
@@ -303,8 +332,9 @@ window.__ModuleLoader__.load({
     function clampToViewport() {
       const maxX = Math.max(0, window.innerWidth - 72)
       const maxY = Math.max(0, window.innerHeight - 84)
-      state.x = Math.min(Math.max(state.x, 0), maxX)
-      state.y = Math.min(Math.max(state.y, 0), maxY)
+      let { x, y } = avoidBlocked(state.x, state.y)
+      state.x = Math.min(Math.max(x, 0), maxX)
+      state.y = Math.min(Math.max(y, 0), maxY)
     }
 
     function renderPosition() {
@@ -363,9 +393,20 @@ window.__ModuleLoader__.load({
       if (roll < 0.45) next = 'idle'
       else if (roll < 0.85) next = 'walk'
       else next = (hour >= 23 || hour < 7) ? 'sleep' : 'sleep'
-      // choose a walk direction / target
+      // choose a stroll destination within WALK_RANGE of the home anchor
       if (next === 'walk') {
-        state.dir = Math.random() < 0.5 ? 1 : -1
+        const maxX = Math.max(0, window.innerWidth - 72)
+        const maxY = Math.max(0, window.innerHeight - 84)
+        let tx = state.home.x + (Math.random() * 2 - 1) * WALK_RANGE
+        let ty = state.home.y + (Math.random() * 2 - 1) * WALK_RANGE * 0.5
+        const safe = avoidBlocked(
+          Math.min(Math.max(tx, 0), maxX),
+          Math.min(Math.max(ty, 0), maxY),
+        )
+        state.walkTarget = safe
+        state.dir = safe.x >= state.x ? 1 : -1
+      } else {
+        state.walkTarget = null
       }
       setAction(next)
     }
@@ -395,6 +436,13 @@ window.__ModuleLoader__.load({
       if (!state.dragging) return
       state.dragging = false
       state.root.dataset.dragging = 'false'
+      // never park on top of the composer; re-anchor wandering here
+      const safe = avoidBlocked(state.x, state.y)
+      state.x = safe.x; state.y = safe.y
+      clampToViewport()
+      renderPosition()
+      state.home = { x: state.x, y: state.y }
+      state.walkTarget = null
       persist()
       setAction('happy')
     }
@@ -454,10 +502,23 @@ window.__ModuleLoader__.load({
       const dt = lastTs ? (ts - lastTs) / 1000 : 0
       lastTs = ts
       if (state.action === 'walk' && !state.dragging) {
-        state.x += WALK_SPEED * dt * state.dir
-        const maxX = window.innerWidth - 72
-        if (state.x <= 0) { state.x = 0; state.dir = 1 }
-        if (state.x >= maxX) { state.x = maxX; state.dir = -1 }
+        const t = state.walkTarget
+        if (t) {
+          // stroll toward the target; arrive -> stop and idle
+          const dx = t.x - state.x
+          const step = WALK_SPEED * dt
+          if (Math.abs(dx) <= step) {
+            state.x = t.x
+            state.walkTarget = null
+            setAction('idle')
+          } else {
+            state.dir = dx > 0 ? 1 : -1
+            state.x += step * state.dir
+          }
+          state.y += Math.sign(t.y - state.y) * Math.min(Math.abs(t.y - state.y), step)
+        } else {
+          setAction('idle')
+        }
         renderPosition()
       }
       state.rafId = requestAnimationFrame(tick)
@@ -472,11 +533,13 @@ window.__ModuleLoader__.load({
       const { root, pet, bubble } = buildPet()
       state.root = root; state.pet = pet; state.bubble = bubble
       if (state.x === 0 && state.y === 0) {
-        // default: bottom-right corner of the viewport
-        state.x = window.innerWidth - 120
-        state.y = window.innerHeight - 140
+        // default: bottom-right corner of the viewport, clear of the composer
+        const safe = avoidBlocked(window.innerWidth - 120, window.innerHeight - 140)
+        state.x = safe.x
+        state.y = safe.y
       }
       clampToViewport()
+      state.home = { x: state.x, y: state.y }
       renderPosition()
 
       root.addEventListener('pointerdown', onPointerDown)
