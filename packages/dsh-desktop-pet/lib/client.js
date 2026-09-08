@@ -37,6 +37,38 @@ window.__ModuleLoader__.load({
     const ROOT_ID = 'dsh-desktop-pet-root'
     const STYLE_ID = 'dsh-desktop-pet-styles'
     const LS_KEY = 'dsh-desktop-pet:state'
+    const LS_SETTINGS_KEY = 'dsh-desktop-pet:settings'
+
+    // ------------------------------------------------------------- settings
+    // User-tunable knobs (right-click the pet to open the config menu).
+    const RANGE_PRESETS = { small: 80, medium: 150, large: 260 }   // px
+    const SPEED_PRESETS = { slow: 24, medium: 42, fast: 70 }       // px/s
+    const DEFAULT_SETTINGS = {
+      enabled: true,        // show the pet at all
+      range: 'medium',      // wander radius preset around the home anchor
+      speed: 'medium',      // walk speed preset
+      sessionLink: true,    // react to AI streaming / tool calls / quiet
+    }
+
+    let settings = { ...DEFAULT_SETTINGS }
+
+    function loadSettings() {
+      try {
+        const raw = localStorage.getItem(LS_SETTINGS_KEY)
+        if (!raw) return
+        const saved = JSON.parse(raw)
+        if (typeof saved !== 'object' || saved === null) return
+        if (typeof saved.enabled === 'boolean') settings.enabled = saved.enabled
+        if (RANGE_PRESETS[saved.range]) settings.range = saved.range
+        if (SPEED_PRESETS[saved.speed]) settings.speed = saved.speed
+        if (typeof saved.sessionLink === 'boolean') settings.sessionLink = saved.sessionLink
+      } catch { /* corrupted settings — keep defaults */ }
+    }
+
+    function persistSettings() {
+      try { localStorage.setItem(LS_SETTINGS_KEY, JSON.stringify(settings)) }
+      catch { /* storage unavailable — session-only settings, fine */ }
+    }
 
     // ------------------------------------------------------------- actions
     // duration: [minMs, maxMs] for looping actions; fixed ms for one-shots.
@@ -52,8 +84,8 @@ window.__ModuleLoader__.load({
       dangle:  { loop: true,  duration: [60000, 60000] },  // while dragging
     }
 
-    const WALK_SPEED = 42 // px per second
-    const WALK_RANGE = 150 // px — wander radius around the pet's home anchor
+    const WALK_SPEED = () => SPEED_PRESETS[settings.speed] ?? 42   // px per second
+    const WALK_RANGE = () => RANGE_PRESETS[settings.range] ?? 150  // px — wander radius
 
     // Blocked zones: UI the pet must never sit on top of (composer etc.).
     function blockedRects() {
@@ -293,6 +325,66 @@ window.__ModuleLoader__.load({
   0%, 100% { transform: rotate(6deg) translateY(2px); }
   50% { transform: rotate(-6deg) translateY(2px); }
 }
+
+/* ---- right-click config menu ---- */
+.dpet-menu {
+  position: fixed;
+  z-index: 45;
+  min-width: 168px;
+  padding: 6px 0;
+  border-radius: 10px;
+  background: var(--dsw-bg-elevated, #fff);
+  border: 1px solid rgba(0,0,0,0.1);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.16);
+  font: 12px/1.6 -apple-system, "PingFang SC", "Segoe UI", sans-serif;
+  color: var(--dsw-fg, #1c2333);
+}
+.dpet-menu-head {
+  padding: 4px 12px 6px;
+  font-size: 11px;
+  opacity: 0.55;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+  margin-bottom: 4px;
+}
+.dpet-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dpet-menu-item:hover { background: rgba(77,107,254,0.08); }
+.dpet-menu-item .dpet-opt {
+  display: inline-flex;
+  gap: 2px;
+}
+.dpet-menu-item .dpet-seg {
+  padding: 1px 7px;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0.55;
+}
+.dpet-menu-item .dpet-seg[data-on="true"] {
+  background: var(--dsw-static-deepseek-500, #4d6bfe);
+  color: #fff;
+  opacity: 1;
+}
+.dpet-menu-item .dpet-check {
+  width: 15px; height: 15px;
+  border-radius: 4px;
+  border: 1px solid rgba(0,0,0,0.25);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: #fff;
+}
+.dpet-menu-item .dpet-check[data-on="true"] {
+  background: var(--dsw-static-deepseek-500, #4d6bfe);
+  border-color: transparent;
+}
 `
       document.head.append(style)
     }
@@ -397,8 +489,8 @@ window.__ModuleLoader__.load({
       if (next === 'walk') {
         const maxX = Math.max(0, window.innerWidth - 72)
         const maxY = Math.max(0, window.innerHeight - 84)
-        let tx = state.home.x + (Math.random() * 2 - 1) * WALK_RANGE
-        let ty = state.home.y + (Math.random() * 2 - 1) * WALK_RANGE * 0.5
+        let tx = state.home.x + (Math.random() * 2 - 1) * WALK_RANGE()
+        let ty = state.home.y + (Math.random() * 2 - 1) * WALK_RANGE() * 0.5
         const safe = avoidBlocked(
           Math.min(Math.max(tx, 0), maxX),
           Math.min(Math.max(ty, 0), maxY),
@@ -462,12 +554,111 @@ window.__ModuleLoader__.load({
       setAction('eat')
     }
 
+    // ------------------------------------------------------- config menu
+    let menuEl = null
+
+    function closeMenu() {
+      menuEl?.remove()
+      menuEl = null
+    }
+
+    function segRow(label, key, presets, names) {
+      const row = document.createElement('div')
+      row.className = 'dpet-menu-item'
+      const name = document.createElement('span')
+      name.textContent = label
+      const opts = document.createElement('span')
+      opts.className = 'dpet-opt'
+      Object.keys(presets).forEach((k) => {
+        const seg = document.createElement('span')
+        seg.className = 'dpet-seg'
+        seg.textContent = names[k]
+        seg.dataset.on = String(settings[key] === k)
+        seg.addEventListener('click', (ev) => {
+          ev.stopPropagation()
+          settings[key] = k
+          persistSettings()
+          closeMenu(); openMenu()
+        })
+        opts.append(seg)
+      })
+      row.append(name, opts)
+      return row
+    }
+
+    function checkRow(label, key, onChange) {
+      const row = document.createElement('div')
+      row.className = 'dpet-menu-item'
+      const name = document.createElement('span')
+      name.textContent = label
+      const box = document.createElement('span')
+      box.className = 'dpet-check'
+      box.dataset.on = String(settings[key])
+      box.textContent = settings[key] ? '✓' : ''
+      row.append(name, box)
+      row.addEventListener('click', () => {
+        settings[key] = !settings[key]
+        persistSettings()
+        onChange?.()
+        closeMenu(); openMenu()
+      })
+      return row
+    }
+
+    function applyEnabled() {
+      if (!state.root) return
+      if (settings.enabled) {
+        state.root.style.display = ''
+        clampToViewport()
+        renderPosition()
+        state.home = { x: state.x, y: state.y }
+        setAction('idle')
+      } else {
+        state.root.style.display = 'none'
+        clearActionTimer()
+      }
+    }
+
+    function openMenu() {
+      closeMenu()
+      menuEl = document.createElement('div')
+      menuEl.className = 'dpet-menu'
+      menuEl.setAttribute('data-plugin', 'dsh-desktop-pet')
+      const head = document.createElement('div')
+      head.className = 'dpet-menu-head'
+      head.textContent = '🐾 桌面宠物设置'
+      menuEl.append(
+        head,
+        checkRow('显示宠物', 'enabled', applyEnabled),
+        segRow('活动范围', 'range', RANGE_PRESETS, { small: '小', medium: '中', large: '大' }),
+        segRow('行走速度', 'speed', SPEED_PRESETS, { slow: '慢', medium: '中', fast: '快' }),
+        checkRow('会话联动', 'sessionLink'),
+      )
+      // clamp menu inside the viewport
+      const x = Math.min(state.x, window.innerWidth - 190)
+      const y = Math.min(state.y + 88, window.innerHeight - 200)
+      menuEl.style.left = `${Math.max(8, x)}px`
+      menuEl.style.top = `${Math.max(8, y)}px`
+      document.body.append(menuEl)
+    }
+
+    function onContextMenu(ev) {
+      ev.preventDefault()
+      ev.stopPropagation()
+      openMenu()
+      const onDocDown = (e) => {
+        if (menuEl && !menuEl.contains(e.target)) closeMenu()
+        document.removeEventListener('pointerdown', onDocDown, true)
+      }
+      document.addEventListener('pointerdown', onDocDown, true)
+    }
+
     // ------------------------------------------- trigger c: session observer
     function observeSession() {
       const flow = document.querySelector('[data-chat-flow]')
       if (!flow) return // chat not mounted yet; retry on next mount tick
       const mo = new MutationObserver(() => {
-        if (state.disposed) return
+        if (state.disposed || !settings.enabled || !settings.sessionLink) return
         state.sessionBusyUntil = Date.now() + 6000 // busy grace window
         const rows = flow.querySelectorAll('[data-chat-anchor-key]')
         const last = rows[rows.length - 1]
@@ -487,6 +678,7 @@ window.__ModuleLoader__.load({
     function startQuietCheck() {
       state.quietCheckTimer = setInterval(() => {
         if (state.disposed || state.dragging) return
+        if (!settings.enabled || !settings.sessionLink) return
         // long quiet -> nap (unless it's already something interactive)
         if (Date.now() > state.sessionBusyUntil &&
             (state.action === 'idle' || state.action === 'walk')) {
@@ -506,7 +698,7 @@ window.__ModuleLoader__.load({
         if (t) {
           // stroll toward the target; arrive -> stop and idle
           const dx = t.x - state.x
-          const step = WALK_SPEED * dt
+          const step = WALK_SPEED() * dt
           if (Math.abs(dx) <= step) {
             state.x = t.x
             state.walkTarget = null
@@ -530,6 +722,7 @@ window.__ModuleLoader__.load({
       document.getElementById(ROOT_ID)?.remove()
       ensureStyles()
       loadPersisted()
+      loadSettings()
       const { root, pet, bubble } = buildPet()
       state.root = root; state.pet = pet; state.bubble = bubble
       if (state.x === 0 && state.y === 0) {
@@ -548,6 +741,9 @@ window.__ModuleLoader__.load({
       root.addEventListener('pointercancel', onPointerUp)
       root.addEventListener('click', onClick)
       root.addEventListener('dblclick', onDblClick)
+      root.addEventListener('contextmenu', onContextMenu)
+
+      if (!settings.enabled) state.root.style.display = 'none'
 
       // session observer needs the chat flow; retry until the shell mounts it
       const obsTimer = setInterval(() => {
@@ -567,6 +763,7 @@ window.__ModuleLoader__.load({
 
     function dispose() {
       state.disposed = true
+      closeMenu()
       clearActionTimer()
       if (state.quietCheckTimer) clearInterval(state.quietCheckTimer)
       if (state.obsRetryTimer) clearInterval(state.obsRetryTimer)
@@ -579,7 +776,7 @@ window.__ModuleLoader__.load({
     }
 
     // allow manual teardown / HMR reload from the console
-    window.__dshDesktopPet = { dispose, setAction }
+    window.__dshDesktopPet = { dispose, setAction, settings, openMenu }
 
     // cordis plugin shape: the browser-side registry applies this exports
     // object via registry.plugin(), which requires a function or an object
