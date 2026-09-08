@@ -518,11 +518,23 @@ window.__ModuleLoader__.load({
     // allow manual teardown / HMR reload from the console
     window.__dshDesktopPet = { dispose, setAction }
 
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', mount, { once: true })
-    } else {
-      mount()
+    // cordis plugin shape: the browser-side registry applies this exports
+    // object via registry.plugin(), which requires a function or an object
+    // with an `apply` method. Mount in apply() — do NOT mount at factory
+    // time, or the plugin fails to activate with:
+    //   failed to apply loader entry <id> (dsh-desktop-pet):
+    //   invalid plugin, expect function or object with an "apply" method
+    function apply() {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', mount, { once: true })
+      } else {
+        mount()
+      }
     }
+
+    exports.name = 'desktop-pet'
+    exports.inject = []
+    exports.apply = apply
 
     module.exports = exports
     return module.exports
