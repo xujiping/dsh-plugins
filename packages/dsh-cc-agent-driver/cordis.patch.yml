@@ -1,5 +1,0 @@
-# dsh-cc-agent-driver：原生 Claude Code 会话驱动。
-# 通过 `dsh plugin --profile <name> add link:.../packages/dsh-cc-agent-driver` 安装。
-- insert:
-    - id: cc-agent-driver
-      name: 'dsh-cc-agent-driver'

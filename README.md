@@ -10,7 +10,7 @@
 | `packages/dsh-global-memory` | 全局记忆：侧边栏「全局记忆」页，直接查看/编辑 `~/.dsh/AGENTS.md` 与 `~/.dsh/memory/*.md` | `dsh plugin --profile <name> add dsh-global-memory` |
 | `packages/dsh-chat-scroll-nav` | 对话右侧快速导航条：聊天区右缘竖向迷你导航（类似手机通讯录索引），点/拖即跳转到对应消息，当前消息高亮 | `dsh plugin --profile <name> add dsh-chat-scroll-nav` |
 | `packages/dsh-new-session-route` | 新会话路由：侧边栏「新会话」按钮点开下拉，选择新会话后端 —— 默认 DeepSeek Harness 或 Claude Code（经 `dst-gateway` provider 路由） | `dsh plugin --profile <name> add dsh-new-session-route` |
-| `packages/dsh-cc-agent-driver` | Claude Code 原生会话驱动（M0 架构验证中）：同 UUID 绑定 DSH 与 Claude 会话，含严格 Remote、原子发布、只读工具与 MCP 隔离 | `dsh plugin --profile <name> add link:~/AiProjects/dsh-plugins/packages/dsh-cc-agent-driver` |
+| `packages/dsh-agent-driver` | Claude Code 原生会话驱动（M0 架构验证中）：同 UUID 绑定 DSH 与 Claude 会话，含严格 Remote、原子发布、只读工具与 MCP 隔离 | `dsh plugin --profile <name> add link:~/AiProjects/dsh-plugins/packages/dsh-agent-driver` |
 | `packages/dsh-desktop-pet` | 桌面宠物：Web GUI 里一只纯 CSS 小宠，状态机驱动 idle/walk/sleep/happy/eat/typing/work，点击/拖拽/双击喂食，联动会话状态（AI 输出中打字、工具执行中敲锤） | `dsh plugin --profile <name> add link:~/AiProjects/dsh-plugins/packages/dsh-desktop-pet` |
 
 > **已搁置（2026-08-21 起从 desktop profile 卸载）**：`dsh-llm-agent-bridge` 与
@@ -23,7 +23,7 @@ packages/
   dsh-global-memory/       全局记忆插件（host 半边 lib/index.js + client 半边 lib/client.js）
   dsh-chat-scroll-nav/     对话右侧快速导航条（纯 client 半边 lib/client.js；host 半边空实现）
   dsh-new-session-route/   新会话路由下拉（纯 client 半边；cordis client 插件，DOM 钩住「新会话」按钮 + selectModel）
-  dsh-cc-agent-driver/     Claude Code 原生会话驱动（M0：自定义 Agent/Session + Typert Remote + stream-json）
+  dsh-agent-driver/     Claude Code 原生会话驱动（M0：自定义 Agent/Session + Typert Remote + stream-json）
   dsh-desktop-pet/         桌面宠物（纯 client 半边；CSS 关键帧动作 + 状态机 + 节律/交互/会话三类触发器）
   dsh-llm-agent-bridge/    LLM 适配器桥接（已搁置；host 半边，无 client；接入外部 agent CLI）
   dsh-agent-terminal/      智能体终端（已搁置；host 半边 PTY 注册表 + client 半边 xterm 面板；src/client.ts 构建产物为 lib/client.js）

@@ -1,13 +1,13 @@
 {
-  "name": "dsh-cc-agent-driver",
+  "name": "dsh-agent-driver",
   "version": "0.1.0",
-  "description": "DSH 的 Claude Code 原生会话驱动：同一 UUID 绑定 DSH 与 Claude Code 会话。",
-  "keywords": ["dsh", "claude-code", "agent-driver", "native-session"],
+  "description": "DSH 的原生智能体会话驱动：同一 UUID 绑定 DSH 与外部智能体 CLI 会话（当前支持 Claude Code，后续接入 Hermes、OpenClaw 等）。",
+  "keywords": ["dsh", "agent-driver", "claude-code", "hermes", "openclaw", "native-session"],
   "author": "xujiping",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/xujiping/dsh-plugins.git",
-    "directory": "packages/dsh-cc-agent-driver"
+    "directory": "packages/dsh-agent-driver"
   },
   "type": "module",
   "main": "lib/index.js",
@@ -36,7 +36,7 @@
       "patch": "./cordis.patch.yml"
     },
     "client": {
-      "inject": ["connection", "remote", "sessions", "workspaces"],
+      "inject": ["connection", "remote", "sessions", "workspaces", "slots"],
       "platform": "web"
     }
   },

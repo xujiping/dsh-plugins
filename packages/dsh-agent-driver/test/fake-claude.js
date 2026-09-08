@@ -3,7 +3,7 @@
 process.stdin.resume()
 process.stdin.once('data', () => {
   const events = [
-    { type: 'system', subtype: 'init', session_id: process.argv.includes('--resume') ? 'resumed' : 'new', model: 'fake-claude' },
+    { type: 'system', subtype: 'init', session_id: process.argv.includes('--resume') ? 'resumed' : 'new', model: 'fake-claude', permissionMode: 'plan' },
     { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } } },
     { type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'checking' } } },
     { type: 'stream_event', event: { type: 'content_block_stop', index: 0 } },

@@ -5,7 +5,7 @@
  * expose zod to arbitrary plugins.
  */
 function invalid(subject) {
-  return new TypeError(`cc-agent-driver: invalid ${subject}`)
+  return new TypeError(`agent-driver: invalid ${subject}`)
 }
 
 export const workspaceIdSchema = Object.freeze({

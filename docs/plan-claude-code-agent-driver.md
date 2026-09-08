@@ -1,4 +1,4 @@
-# Claude Code 原生会话驱动执行计划（dsh-cc-agent-driver）
+# Claude Code 原生会话驱动执行计划（dsh-agent-driver）
 
 > 目标：在 DSH Web 中创建 Claude Code 会话，并保留 Claude Code 自己的会话、工具执行和续接能力；DSH 负责侧边栏、消息流、事件回放、取消和会话浏览。
 >
@@ -90,6 +90,8 @@ sessionId(UUID) → {
   driver: "claude-code-native",
   driverVersion,
   securityProfile,
+  permissionMode,          // plan | acceptEdits | auto
+  effectivePermissionMode, // Claude system/init 回报，可能不同于请求模式
   createdAt
 }
 ```
@@ -149,6 +151,22 @@ M0/M1 不允许 `bypassPermissions` 或 `--dangerously-skip-permissions`。同�
 
 `--allowedTools` / `--disallowedTools` 只能视为 Claude 内部权限策略的一部分，不能替代 OS 级隔离，也不能实现 DSH 事前审批。M4 不再承诺不存在的权限回调；若未来 CLI 提供官方委托通道，再单独设计审批桥接。
 
+### 4.3 Claude Code 原生权限（已实现）
+
+DSH 的 `read-only`、`workspace-write`、`danger-full-access` 只影响 DSH 自身的 sandbox / approval 服务，不能约束外部 `claude -p` 进程。因此原生会话不复用 `/permission`，而是通过 `ccNative.getPermission(sessionId)` / `ccNative.setPermission(sessionId, permissionMode)` 维护自己的模式。首版只公开：
+
+| UI | CLI | 约束 |
+|---|---|---|
+| 计划 | `plan` | 分析、读取；编辑被阻止。 |
+| 自动编辑 | `acceptEdits` | 可编辑工作区；不承诺 Git 提交、推送等 shell 动作。 |
+| 自动 | `auto` | Claude 分类器决定是否执行。 |
+
+新会话默认 `plan`。因为非交互 `claude -p --resume` 不会可靠恢复先前的权限模式，sidecar 是请求模式的真相源，Driver 必须在**每一轮**显式传入 `--permission-mode <mode>`。解析 `system/init.permissionMode` 后写回 `effectivePermissionMode`；若 CLI / 模型降级，Client 显示实际生效值而非伪造已生效。
+
+`manual` 当前不能暴露为“DSH 可审批”：本机 CLI 没有 `--permission-prompt-tool`，headless 运行会直接拒绝需审批操作。`dontAsk` 需要另行设计可审核的 `--allowedTools` 白名单，`bypassPermissions` 及所有跳过权限的 flag 永久拒绝。模式仅可在 Agent idle 时变更，避免同一个子进程运行中产生前后不一致的权限。
+
+DSH `0.1.0-rc.6` 没有 provider 专属 access-mode 插槽。Client 使用官方 `conversation.input.left` 注册 Claude 控件，并仅对当前原生会话隐藏 DSH 原 access 控件；该兼容层依赖其“访问模式 / Access mode”无障碍标签，DSH 升级时必须做 UI 回归。长期正确修复是上游增加 `conversation.input.access` 的 single slot 或 provider access-selector registry，再删除这段兼容 CSS。
+
 ## 5. 事件翻译契约
 
 必须只写 DSH 已知事件类型，并遵守 surface 校验。最小一轮的顺序为：
@@ -189,12 +207,12 @@ turn/end
 
 #### M0 已完成证据
 
-- 新包 [`packages/dsh-cc-agent-driver`](/Users/xujiping/AiProjects/dsh-plugins/packages/dsh-cc-agent-driver/package.json) 提供 `ccNative.createSession(workspaceId)` 的 Host / Client 严格 descriptor；冒烟测试通过真实 `TypertGatewayService.invoke()` 调用，而非仅检查对象形状。
+- 新包 [`packages/dsh-agent-driver`](/Users/xujiping/AiProjects/dsh-plugins/packages/dsh-agent-driver/package.json) 提供 `ccNative.createSession(workspaceId)` 的 Host / Client 严格 descriptor；冒烟测试通过真实 `TypertGatewayService.invoke()` 调用，而非仅检查对象形状。
 - 创建路径使用 `sessions.prepare → agent.ctx.sessions.enter → agents.enter → sessions.announce → agents.announce`；测试以真实 `SessionStore` 与 `AgentRegistry` 验证了该路径，未调用 `sessions.create()` 或 `agents.register()`。
 - fake CLI 覆盖 nested partial stream、同一 Claude message 的拆分 `assistant`、tool use/result、result usage 和 driver sidecar；所有事件可由真实 Session Store 接受。
 - 真实 Claude CLI 已完成 `--session-id` 首轮与 `--resume` 续接采样，确认同 UUID、输入 JSONL 和实际 stdout 外层事件形状。
 - 发现并修复 MCP 白名单漏洞：仅 `--tools` 时仍加载用户 MCP；添加严格空 MCP 配置后实测 MCP 列表为空。
-- `dsh plugin --profile web add link:.../dsh-cc-agent-driver` 已安装本包；隔离 Web Host 实际加载 Client，`ctx.remote.$mount()` 成功，并显示“Claude Code（原生会话）”新会话菜单。
+- `dsh plugin --profile web add link:.../dsh-agent-driver` 已安装本包；隔离 Web Host 实际加载 Client，`ctx.remote.$mount()` 成功，并显示“Claude Code（原生会话）”新会话菜单。
 - 真实 `ccNative/createSession` 已创建并打开一个空会话；sidecar 只写入同 UUID、driver/version/securityProfile/时间戳。没有发送 Claude prompt。
 - 用同一 profile 进程重启后，DSH 通过真实 `sessionPersistence.prepare()` 恢复该会话；UI 显示 `Claude Code（由本机配置决定）`，证实恢复的 Agent 已取代默认 loop。
 - 恢复后的真实 UI 已发送“只回复 PONG，不要调用工具。”健康请求，返回 `PONG`，并显示一轮一步、耗时和 token 统计；验证覆盖 UI → Agent → Claude `stream-json` → DSH 回放，未调用任何工具。

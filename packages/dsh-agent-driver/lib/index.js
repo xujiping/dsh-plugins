@@ -19,7 +19,7 @@ const { emitAgentEvent } = await importDshModule('@deepseek-ai/dsh-agent')
 const { createScope } = await importDshModule('@deepseek-ai/dsh-scope')
 const { TypertRemoteService } = await importDshModule('@deepseek-ai/dsh-typert-protocol')
 
-export const name = 'cc-agent-driver'
+export const name = 'agent-driver'
 export const inject = ['agents', 'sessions', 'sessionPersistence', 'workspaceRegistry', 'llm']
 
 export const CLAUDE_PROVIDER = 'claude-code-native'
@@ -78,15 +78,15 @@ function permissionStateOf(entry) {
 }
 
 function configOf(raw = {}) {
-  const indexPath = raw.indexPath ?? join(homedir(), '.dsh', 'cc-agent-driver', 'sessions.json')
+  const indexPath = raw.indexPath ?? join(homedir(), '.dsh', 'agent-driver', 'sessions.json')
   const command = raw.command ?? 'claude'
   const tools = Array.isArray(raw.tools) ? raw.tools.map(String) : [...DEFAULT_TOOLS]
   const args = Array.isArray(raw.args) ? raw.args.map(String) : []
   if (args.some((arg) => arg === '--dangerously-skip-permissions' || arg === '--allow-dangerously-skip-permissions')) {
-    throw new Error('cc-agent-driver: bypass-permissions flags are forbidden')
+    throw new Error('agent-driver: bypass-permissions flags are forbidden')
   }
   if (args.some((arg) => arg === '--permission-mode' || arg.startsWith('--permission-mode='))) {
-    throw new Error('cc-agent-driver: --permission-mode is managed per native session; remove it from args')
+    throw new Error('agent-driver: --permission-mode is managed per native session; remove it from args')
   }
   return {
     indexPath,
@@ -130,7 +130,7 @@ export class DriverIndex {
       return parsed.sessions.filter((entry) => entry && entry.driver === DRIVER && typeof entry.sessionId === 'string')
     } catch (error) {
       if (error && error.code === 'ENOENT') return []
-      throw new Error(`cc-agent-driver: cannot read driver index ${this.path}`, { cause: error })
+      throw new Error(`agent-driver: cannot read driver index ${this.path}`, { cause: error })
     }
   }
   async write(entries) {
@@ -242,11 +242,14 @@ export class ClaudeCodeAgent {
       ...tools,
     ]
   }
-  observeEffectivePermissionMode(value) {
+  async observeEffectivePermissionMode(value) {
     if (typeof value !== 'string' || value.length === 0) return
     if (this.permission.effectivePermissionMode === value) return
-    this.permission.effectivePermissionMode = value
-    void this.onEffectivePermissionMode?.(value)
+    if (this.onEffectivePermissionMode !== undefined) {
+      await this.onEffectivePermissionMode(value)
+    } else {
+      this.permission.effectivePermissionMode = value
+    }
   }
   async runTurn(message) {
     const turn = ++this.turn
@@ -407,8 +410,9 @@ async function consumeClaudeJsonl(agent, child, turn, step, signal) {
     if (line.trim() === '') continue
     let event
     try { event = JSON.parse(line) } catch { continue }
-    if (event.type === 'system' && event.subtype === 'init' && typeof event.model === 'string') {
-      initModel = event.model
+    if (event.type === 'system' && event.subtype === 'init') {
+      if (typeof event.model === 'string') initModel = event.model
+      await agent.observeEffectivePermissionMode(event.permissionMode)
       continue
     }
     if (event.type === 'stream_event' && event.event && typeof event.event === 'object') {
@@ -472,15 +476,21 @@ function normalizeUsage(usage) {
 /** Host Remote plus lifecycle owner. */
 export class ClaudeCodeDriverGateway extends TypertRemoteService {
   constructor(ctx, rawConfig = {}) {
-    super(ctx, 'ccNative')
+    super(ctx, 'nativeAgent')
     this.config = configOf(rawConfig)
     this.index = new DriverIndex(this.config.indexPath)
+    // 仅当使用默认索引路径时，才从旧包名（dsh-cc-agent-driver）时代的
+    // ~/.dsh/cc-agent-driver/sessions.json 迁移存量会话；旧文件保留不删。
+    this.legacyPath = rawConfig.indexPath === undefined
+      ? join(homedir(), '.dsh', 'cc-agent-driver', 'sessions.json')
+      : undefined
     this.handles = new Map()
+    this.indexWrite = Promise.resolve()
     // A gateway is a long-lived host service. On plugin unload, immediately
     // cancel every child process and let each handle finish its detach path.
     ctx.effect(() => () => {
       for (const handle of [...this.handles.values()]) void handle.dispose()
-    }, 'cc-agent-driver: dispose published sessions')
+    }, 'agent-driver: dispose published sessions')
     // Native sessions have no LLM route the title provider can stream, so they
     // only ever receive the deterministic first-prompt fallback title. Prefix
     // that title (pinned as a user title) so the workspace session list shows
@@ -497,23 +507,91 @@ export class ClaudeCodeDriverGateway extends TypertRemoteService {
       })
     })
   }
+  async migrateLegacyIndex() {
+    if (this.legacyPath === undefined) return
+    try {
+      const legacy = await new DriverIndex(this.legacyPath).read()
+      if (legacy.length === 0) return
+      const current = await this.index.read()
+      if (current.length > 0) return
+      await this.index.write(legacy)
+      this.ctx.logger?.info?.(`agent-driver: migrated ${legacy.length} legacy session(s) from ${this.legacyPath}`)
+    } catch (error) {
+      this.ctx.logger?.warn?.(`agent-driver: legacy index migration skipped: ${String(error)}`)
+    }
+  }
   async createSession(workspaceId) {
     const workspace = this.ctx.workspaceRegistry.get(workspaceId)
-    if (workspace === undefined) throw new Error(`cc-agent-driver: workspace "${workspaceId}" was not found`)
+    if (workspace === undefined) throw new Error(`agent-driver: workspace "${workspaceId}" was not found`)
     return this.createForWorkspace(workspace)
+  }
+  enqueueIndexWrite(task) {
+    const write = this.indexWrite.then(task)
+    // 后续写入不能被一次磁盘错误永久短路；调用方仍会收到当前这次失败。
+    this.indexWrite = write.catch(() => undefined)
+    return write
+  }
+  persistRecord(record) {
+    return this.enqueueIndexWrite(() => this.index.upsert(record))
+  }
+  recordFor(entry) {
+    return {
+      ...entry,
+      driver: DRIVER,
+      driverVersion: DRIVER_VERSION,
+      ...permissionStateOf(entry),
+    }
+  }
+  getPermission(sessionId) {
+    const handle = this.handles.get(sessionId)
+    if (handle === undefined) throw new Error(`agent-driver: session "${sessionId}" is not a live native Claude session`)
+    return permissionStateOf(handle.record)
+  }
+  async setPermission(sessionId, permissionMode) {
+    if (!CLAUDE_PERMISSION_MODES.includes(permissionMode)) {
+      throw new Error(`agent-driver: unsupported Claude permission mode "${String(permissionMode)}"`)
+    }
+    const handle = this.handles.get(sessionId)
+    if (handle === undefined) throw new Error(`agent-driver: session "${sessionId}" is not a live native Claude session`)
+    if (handle.agent.status !== 'idle') {
+      throw new Error('agent-driver: wait for the current Claude turn to finish before changing its permission mode')
+    }
+    const next = { ...handle.record, permissionMode }
+    delete next.effectivePermissionMode
+    await this.persistRecord(next)
+    Object.assign(handle.record, next)
+    delete handle.record.effectivePermissionMode
+    return permissionStateOf(handle.record)
+  }
+  async observeEffectivePermission(sessionId, record, effectivePermissionMode) {
+    if (typeof effectivePermissionMode !== 'string' || effectivePermissionMode.length === 0) return
+    const handle = this.handles.get(sessionId)
+    if (handle === undefined || handle.record !== record || record.effectivePermissionMode === effectivePermissionMode) return
+    const next = { ...record, effectivePermissionMode }
+    try {
+      await this.persistRecord(next)
+      Object.assign(record, next)
+    } catch (error) {
+      this.ctx.logger?.warn?.(`agent-driver: cannot persist effective permission mode for ${sessionId}: ${String(error)}`)
+    }
   }
   async createForWorkspace(workspace) {
     const cwd = workspace.path
-    if (!isAbsolute(cwd)) throw new Error('cc-agent-driver: workspace path must be absolute')
+    if (!isAbsolute(cwd)) throw new Error('agent-driver: workspace path must be absolute')
     const id = randomUUID()
     const session = this.ctx.sessions.prepare(id, { meta: { cwd } })
     // Do not call the generic `sessions.selectModel` API for a native Agent.
     // That API persists a global default model selection, so a later default
     // Harness session would inherit this sentinel provider.
     ensureNativeRequestHeader(session)
-    const handle = this.publish(session, 'startup')
+    const record = this.recordFor({
+      sessionId: id,
+      securityProfile: this.config.securityProfile,
+      createdAt: Date.now(),
+    })
+    const handle = this.publish(session, 'startup', record)
     try {
-      await this.index.upsert({ sessionId: id, driver: DRIVER, driverVersion: DRIVER_VERSION, securityProfile: this.config.securityProfile, createdAt: Date.now() })
+      await this.persistRecord(record)
       await workspace.attachSession(id)
       return { sessionId: id }
     } catch (error) {
@@ -529,18 +607,29 @@ export class ClaudeCodeDriverGateway extends TypertRemoteService {
       let preparation
       try {
         preparation = await this.ctx.sessionPersistence.prepare(entry.sessionId)
-        this.publish(preparation.session, 'resume')
+        const record = this.recordFor(entry)
+        this.publish(preparation.session, 'resume', record)
+        if (entry.driverVersion !== DRIVER_VERSION || entry.permissionMode !== record.permissionMode || entry.effectivePermissionMode !== record.effectivePermissionMode) {
+          await this.persistRecord(record)
+        }
       } catch (error) {
-        this.ctx.logger?.warn?.(`cc-agent-driver: cannot restore ${entry.sessionId}: ${String(error)}`)
+        this.ctx.logger?.warn?.(`agent-driver: cannot restore ${entry.sessionId}: ${String(error)}`)
       } finally {
         preparation?.[Symbol.dispose]?.()
       }
     }
   }
-  publish(session, source) {
+  publish(session, source, record = this.recordFor({ sessionId: session.id, securityProfile: this.config.securityProfile })) {
     // Upgrade blank sessions created by earlier M0 builds during cold restore.
     ensureNativeRequestHeader(session)
-    const agent = new ClaudeCodeAgent(this.ctx, session.id, session, this.config)
+    const agent = new ClaudeCodeAgent(
+      this.ctx,
+      session.id,
+      session,
+      this.config,
+      record,
+      (effectivePermissionMode) => this.observeEffectivePermission(session.id, record, effectivePermissionMode),
+    )
     let detachSession
     let detachAgent
     const dispose = async () => {
@@ -561,7 +650,7 @@ export class ClaudeCodeDriverGateway extends TypertRemoteService {
       const stored = lastTitleEvent(session)
       if (stored !== undefined) prefixTitleEvent(session, stored.data)
       emitAgentEvent(this.ctx, agent, 'agent/session-start', { source })
-      const handle = { agent, dispose }
+      const handle = { agent, record, dispose }
       this.handles.set(session.id, handle)
       return handle
     } catch (error) {
@@ -576,6 +665,7 @@ export class ClaudeCodeDriverGateway extends TypertRemoteService {
 export async function apply(ctx, config) {
   ctx.llm.registerAdapter([CLAUDE_PROVIDER], new NativeSentinelAdapter())
   const gateway = new ClaudeCodeDriverGateway(ctx, config)
+  await gateway.migrateLegacyIndex()
   await gateway.restore()
 }
 
