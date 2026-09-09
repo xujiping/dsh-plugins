@@ -293,8 +293,6 @@ body[data-ds-dark-theme] .dpet-pet {
 body[data-ds-dark-theme] .dpet-foot {
   background: #3a4a9f;
 }
-body[data-ds-dark-theme] .dpet-eye { background: #e8edfb; }
-body[data-ds-dark-theme] .dpet-mouth { border-color: #e8edfb; }
 body[data-ds-dark-theme] .dpet-root {
   filter: drop-shadow(0 4px 8px rgba(0,0,0,0.45))
           drop-shadow(0 0 6px rgba(111,134,214,0.35));
