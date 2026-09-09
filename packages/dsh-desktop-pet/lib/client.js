@@ -18,8 +18,9 @@
  *        a. autonomous timer  — random idle/walk/sleep wander (AI free will)
  *        b. user interaction  — drag (dangle), click (happy), dblclick (eat)
  *        c. session observer — MutationObserver on [data-chat-flow]:
- *             assistant streaming  -> typing
- *             tool-call rows added -> work
+ *             assistant streaming  -> typing (faces the chat panel)
+ *             tool-call rows added -> work   (faces the chat panel)
+ *             user row added       -> happy  (perks up at your message)
  *             quiet for 3 minutes  -> sleep
  *
  * Stable DOM hooks this relies on (same as dsh-chat-scroll-nav):
@@ -466,7 +467,7 @@ body[data-ds-dark-theme] .dpet-root {
     // ---------------------------------------------------- state machine core
     const BUBBLES = {
       idle: '', walk: '', sleep: '💤', happy: '💗', eat: '🍪',
-      typing: '⌨️', work: '🔧', dangle: '?!',
+      typing: '💭', work: '🔧', dangle: '?!',
     }
 
     function clearActionTimer() {
@@ -767,6 +768,15 @@ body[data-ds-dark-theme] .dpet-root {
     }
 
     // ------------------------------------------- trigger c: session observer
+    /** Turn the pet to face the conversation panel (session activity). */
+    function faceChat() {
+      const flow = document.querySelector('[data-chat-flow]')
+      if (!flow || !state.pet) return
+      const cx = flow.getBoundingClientRect().left + 40 // roughly panel center
+      state.dir = cx < state.x ? -1 : 1
+      state.pet.dataset.dir = String(state.dir)
+    }
+
     function observeSession() {
       const flow = document.querySelector('[data-chat-flow]')
       if (!flow) return // chat not mounted yet; retry on next mount tick
@@ -778,11 +788,17 @@ body[data-ds-dark-theme] .dpet-root {
         const kind = last ? (last.getAttribute('data-chat-flow-kind') || '') : ''
         if (state.dragging) return
         if (kind === 'tool-call' || kind.includes('tool')) {
+          faceChat()
           if (state.action !== 'work') setAction('work', { sticky: true })
         } else if (kind === 'assistant') {
+          faceChat()
           if (state.action !== 'typing') setAction('typing', { sticky: true })
+        } else if (kind === 'user') {
+          // the human just said something: look at the chat and perk up
+          faceChat()
+          if (state.action !== 'sleep') setAction('happy')
         }
-        // user rows / quiet -> leave the sticky timer to fall back to wander
+        // quiet -> leave the sticky timer to fall back to wander
       })
       mo.observe(flow, { childList: true, subtree: true })
       state.sessionObserver = mo
