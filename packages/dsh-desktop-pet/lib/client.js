@@ -402,6 +402,18 @@ body[data-ds-dark-theme] .dpet-root {
   background: var(--dsw-static-deepseek-500, #4d6bfe);
   border-color: transparent;
 }
+/* quick-action section inside the config menu */
+.dpet-menu-div {
+  padding: 4px 12px 2px;
+  font-size: 11px;
+  opacity: 0.55;
+  border-top: 1px solid rgba(0,0,0,0.08);
+  margin-top: 4px;
+}
+.dpet-menu-item .dpet-act {
+  font-size: 11px;
+  opacity: 0.5;
+}
 `
       document.head.append(style)
     }
@@ -651,6 +663,14 @@ body[data-ds-dark-theme] .dpet-root {
         segRow('行走速度', 'speed', SPEED_PRESETS, { slow: '慢', medium: '中', fast: '快' }),
         checkRow('会话联动', 'sessionLink'),
       )
+      // quick-action section
+      const div = document.createElement('div')
+      div.className = 'dpet-menu-div'
+      div.textContent = '⚡ 快捷操作'
+      menuEl.append(div)
+      QUICK_ACTIONS.forEach(({ label, hint, run }) => {
+        menuEl.append(actRow(label, hint, run))
+      })
       // clamp menu inside the viewport
       const x = Math.min(state.x, window.innerWidth - 190)
       const y = Math.min(state.y + 88, window.innerHeight - 200)
@@ -658,6 +678,70 @@ body[data-ds-dark-theme] .dpet-root {
       menuEl.style.top = `${Math.max(8, y)}px`
       document.body.append(menuEl)
     }
+
+    // ------------------------------------------------------- quick actions
+    // Utility tricks surfaced in the right-click menu. All browser-side;
+    // the new-session one needs the cordis client context (see apply()).
+    let clientCtx = null
+
+    function actRow(label, hint, run) {
+      const row = document.createElement('div')
+      row.className = 'dpet-menu-item'
+      const name = document.createElement('span')
+      name.textContent = label
+      const tag = document.createElement('span')
+      tag.className = 'dpet-act'
+      tag.textContent = hint
+      row.append(name, tag)
+      row.addEventListener('click', () => {
+        closeMenu()
+        setAction('happy')
+        run()
+      })
+      return row
+    }
+
+    const QUICK_ACTIONS = [
+      {
+        label: '🔄 刷新页面', hint: 'F5',
+        run: () => location.reload(),
+      },
+      {
+        label: '⬇️ 滚动到最新消息', hint: '',
+        run: () => {
+          const scroller = document.querySelector('[data-conversation-scroll]')
+          if (scroller) scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' })
+        },
+      },
+      {
+        label: '➕ 新建会话', hint: '',
+        run: () => {
+          try {
+            clientCtx?.get('workspaces').startSession()
+          } catch (error) {
+            console.warn('[dsh-desktop-pet] startSession failed:', error)
+          }
+        },
+      },
+      {
+        label: '📋 复制调试信息', hint: '',
+        run: async () => {
+          const info = JSON.stringify({
+            plugin: 'dsh-desktop-pet',
+            action: state.action,
+            position: { x: Math.round(state.x), y: Math.round(state.y) },
+            settings,
+            href: location.href,
+            dark: document.body.hasAttribute('data-ds-dark-theme'),
+          }, null, 2)
+          try {
+            await navigator.clipboard.writeText(info)
+          } catch {
+            console.info('[dsh-desktop-pet] debug info:', info)
+          }
+        },
+      },
+    ]
 
     function onContextMenu(ev) {
       ev.preventDefault()
@@ -789,6 +873,7 @@ body[data-ds-dark-theme] .dpet-root {
       if (clickTimer) clearTimeout(clickTimer)
       state.root?.remove()
       document.getElementById(STYLE_ID)?.remove()
+      clientCtx = null
       console.info('[dsh-desktop-pet] pet disposed')
     }
 
@@ -801,7 +886,8 @@ body[data-ds-dark-theme] .dpet-root {
     // time, or the plugin fails to activate with:
     //   failed to apply loader entry <id> (dsh-desktop-pet):
     //   invalid plugin, expect function or object with an "apply" method
-    function apply() {
+    function apply(ctx) {
+      clientCtx = ctx ?? null   // cordis client root context (quick actions)
       if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', mount, { once: true })
       } else {
@@ -810,7 +896,7 @@ body[data-ds-dark-theme] .dpet-root {
     }
 
     exports.name = 'desktop-pet'
-    exports.inject = []
+    exports.inject = ['workspaces']
     exports.apply = apply
 
     module.exports = exports
