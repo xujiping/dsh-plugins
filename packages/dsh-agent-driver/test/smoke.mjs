@@ -78,6 +78,7 @@ const indexPath = join(scratch, 'sessions.json')
   }
   try {
     await clientApi.apply({
+      inject: () => {},
       remote: { $mount: async (value) => { mounted = value; return () => {} } },
       reflect: { get: (key) => key === 'remote.nativeAgent' ? { getPermission: async () => ({ ok: false, error: {} }) } : undefined },
       get: (key) => key === 'sessions' ? { list: { getSnapshot: () => ({ current: undefined }), subscribe: () => () => {} } } : undefined,
@@ -93,8 +94,8 @@ const indexPath = join(scratch, 'sessions.json')
   }
   assert.equal(mounted.package, 'dsh-agent-driver')
   assert.equal(mounted.descriptors[0].namespace, 'nativeAgent')
-  assert.deepEqual(mounted.descriptors.map((descriptor) => descriptor.method), ['createSession', 'getPermission', 'setPermission', 'createSession', 'getPermission', 'setPermission'])
-  assert.deepEqual(mounted.descriptors.map((descriptor) => descriptor.namespace), ['nativeAgent', 'nativeAgent', 'nativeAgent', 'hermesAgent', 'hermesAgent', 'hermesAgent'])
+  assert.deepEqual(mounted.descriptors.map((descriptor) => descriptor.method), ['createSession', 'getPermission', 'setPermission', 'createSession', 'getPermission', 'setPermission', 'getModels', 'setModel', 'getModels', 'setModel'])
+  assert.deepEqual(mounted.descriptors.map((descriptor) => descriptor.namespace), ['nativeAgent', 'nativeAgent', 'nativeAgent', 'hermesAgent', 'hermesAgent', 'hermesAgent', 'nativeAgent', 'nativeAgent', 'hermesAgent', 'hermesAgent'])
   assert.equal(slotRegistrations[0].entry.name, 'conversation.input.left')
   assert.equal(slotRegistrations[0].entry.id, 'claude-code-permission')
 }
@@ -133,9 +134,9 @@ ctx.llm.registerAdapter([CLAUDE_PROVIDER], {
 
 // Host and Client contributions share one strict endpoint contract.
 assert.equal(TYPERT.invocations[0].namespace, 'nativeAgent')
-assert.deepEqual(TYPERT.invocations.map((invocation) => invocation.method), ['createSession', 'getPermission', 'setPermission', 'createSession', 'getPermission', 'setPermission'])
-assert.deepEqual(TYPERT.invocations.map((invocation) => invocation.namespace), ['nativeAgent', 'nativeAgent', 'nativeAgent', 'hermesAgent', 'hermesAgent', 'hermesAgent'])
-assert.deepEqual(REMOTE.descriptors.map((descriptor) => descriptor.method), ['createSession', 'getPermission', 'setPermission', 'createSession', 'getPermission', 'setPermission'])
+assert.deepEqual(TYPERT.invocations.map((invocation) => invocation.method), ['getModels', 'setModel', 'createSession', 'getPermission', 'setPermission', 'getModels', 'setModel', 'createSession', 'getPermission', 'setPermission'])
+assert.deepEqual(TYPERT.invocations.map((invocation) => invocation.namespace), ['nativeAgent', 'nativeAgent', 'nativeAgent', 'nativeAgent', 'nativeAgent', 'hermesAgent', 'hermesAgent', 'hermesAgent', 'hermesAgent', 'hermesAgent'])
+assert.deepEqual(REMOTE.descriptors.map((descriptor) => descriptor.method), ['getModels', 'setModel', 'createSession', 'getPermission', 'setPermission', 'getModels', 'setModel', 'createSession', 'getPermission', 'setPermission'])
 assert.equal(TYPERT.invocations[0].parameters[0].codec.mode, 'strict')
 assert.ok('_zod' in TYPERT.invocations[0].parameters[0].codec.schema, 'Host descriptor is a zod v4 schema for typert-loader')
 assert.equal(REMOTE.descriptors[0].result.codec ? 'unexpected' : REMOTE.descriptors[0].result.mode, 'strict')

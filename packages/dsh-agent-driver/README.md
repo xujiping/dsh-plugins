@@ -57,11 +57,25 @@ DSH `0.1.0-rc.6` 尚未提供 provider 专属 access-mode 插槽。本包通过�
 
 ## 模型显示
 
-原生会话中官方模型切换器被隐藏（模型由 CLI 本机配置决定），取而代之在权限控件左侧显示一个只读模型名：
+原生会话中官方模型切换器被隐藏（使用当前 agent 的独立模型选择），取而代之在权限控件左侧显示一个只读模型名：
 
 - Claude Code：来自 stream-json `system/init` 事件的 `model` 字段，首轮后出现。
 - Hermes：来自 ACP `session/new` / `session/load` 响应的 `models.currentModelId`（去掉 `provider:` 前缀）。
-- 模型名持久化在各 driver sidecar（展示性字段），随 `getPermission` 一并返回。想换模型请到对应 CLI 修改（`claude` settings / `hermes model`）。
+- 模型名持久化在各 driver sidecar（展示性字段），随 `getPermission` 一并返回。输入 `/model` 打开当前 agent 的模型选择面板；支持搜索、键盘选择和取消。Claude 模型列表来自初始化协议；Hermes 模型目录复用本机终端 `/model` 的 `hermes_cli.inventory.build_models_payload`，先按提供商分组并显示数量，再进入组内选择，支持返回和取消。选择写入当前会话 sidecar，后续消息使用该模型，不修改全局默认配置。
+
+## 会话斜杠命令
+
+在输入框输入 `/`，原生会话会显示对应 CLI 实际公布的命令目录；选择后可补充参数，按 Enter 交给当前会话的 agent 执行。普通 Harness 会话仍使用原有命令。原生 `/model` 展示 agent 自身模型列表，`/compact` 使用 agent 自身压缩处理器，支持 Claude 插件的 `插件名:命令名`。
+
+目录按会话隔离、首次加载后缓存：Claude 通过 stream-json 的 `initialize` 控制请求发现（保留当前工具、安全模式和工作目录，禁用探测会话持久化）；Hermes 通过临时 ACP 会话的 `available_commands_update` 发现。发现阶段不发送模型提示词，15 秒超时；失败后可重试，卸载会取消探测进程。只展示当前非交互通道公布的命令，可能少于交互终端中的完整列表。
+
+命令及回复通过原有会话事件流记录；运行中的 agent 拒绝新命令。Hermes 的斜杠输入不追加格式提示。一般命令由 CLI 决定行为及持久化范围。`/model`（包括带模型 ID 的形式）由插件保存会话选择：Claude 每轮传入 `--model`，Hermes 在每轮 ACP 会话载入后调用 `session/set_model`。运行期间拒绝切换；模型列表加载失败可在面板重试。其他命令的终端专属交互尚未逐一适配。
+
+DSH rc.6 没有 provider 专属命令分发接口：Host 适配公开的 `commands.list/execute`，Client 适配 `commandUi` 的候选和选择入口，原生会话跳过全局客户端贡献及装饰器。卸载恢复原入口；升级 DSH 后需回归 `/` 菜单及键盘选择。
+
+本次包含 Host 修改，安装为本地 link 的 profile 需要重启 DSH，再刷新 GUI。
+
+Hermes 模型目录通过配置的 `hermes` 启动文件解析其 Python 环境，保留 CLI 参数（包括 profile）、工作目录和 dotenv 初始化；不读取 ACP 的单提供商精选列表。目录加载沿用 Hermes 的缓存和模型发现逻辑，最长等待 60 秒。`command` 应指向 Python 版 Hermes 启动文件；不支持的 shell 包装器会明确报错。Hermes 升级后需要回归其 inventory 接口。只将模型和提供商展示字段传到 GUI；自定义提供商选择编码为 ACP 可识别的 `custom:name:model`，不会将密钥传给前端。
 
 ## 验证
 

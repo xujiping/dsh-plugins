@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute } from 'node:path'
 import { importDshModule } from './dsh-runtime.js'
+import { discoverModels, discoverCommands, installNativeCommands } from './commands.js'
 
 const { createAssistantMessage } = await importDshModule('@deepseek-ai/dsh-llm')
 const { emitAgentEvent } = await importDshModule('@deepseek-ai/dsh-agent')
@@ -159,6 +160,7 @@ export class CliDriverAgent {
     this.status = 'idle'
     this.turn = session.events.findLast((event) => event.type === 'turn/start')?.data.turn ?? 0
     this.activity = Promise.resolve()
+    this.discoveryController = new AbortController()
     // The normal API only observes these read-only fields; custom ownership
     // deliberately keeps its queue private rather than abusing dsh-agent Inbox.
     this.inbox = Object.freeze({ nextTurn: [], nextStep: [], hasPending: false, clear() {} })
@@ -223,6 +225,16 @@ export class CliDriverAgent {
     try {
       await this.gateway?.persistRecord(this.gateway.recordFor({ ...this.permission }))
     } catch { /* best-effort：展示性数据，失败不影响会话 */ }
+  }
+  listCommands() {
+    if (this.commandCatalog !== undefined) return Promise.resolve(this.commandCatalog)
+    if (this.commandDiscovery === undefined) {
+      this.commandDiscovery = discoverCommands(this, this.discoveryController.signal).then((commands) => {
+        this.commandCatalog = commands
+        return commands
+      }).finally(() => { this.commandDiscovery = undefined })
+    }
+    return this.commandDiscovery
   }
   async runTurn(message) {
     const turn = ++this.turn
@@ -395,6 +407,23 @@ export class CliDriverGateway extends TypertRemoteService {
     if (handle === undefined) throw new Error(`${this.profile.pluginName}: session "${sessionId}" is not a live native ${this.profile.label} session`)
     return this.permissionStateOf(handle.record)
   }
+  async getModels(sessionId) {
+    const handle = this.handles.get(sessionId)
+    if (!handle) throw new Error('会话不属于当前原生驱动')
+    return discoverModels(handle.agent, handle.agent.discoveryController.signal)
+  }
+  async setModel(sessionId, modelId) {
+    const handle = this.handles.get(sessionId)
+    if (!handle) throw new Error('会话不属于当前原生驱动')
+    if (handle.agent.status !== 'idle') throw new Error('请等待当前 agent 完成后再切换模型')
+    const models = await this.getModels(sessionId)
+    if (!models.some((model) => model.id === modelId)) throw new Error('该模型不在当前 agent 的可选列表中')
+    if (handle.agent.status !== 'idle') throw new Error('请等待当前 agent 完成后再切换模型')
+    const next = { ...handle.record, selectedModel: modelId, model: modelId }
+    await this.persistRecord(next)
+    Object.assign(handle.record, next)
+    return this.permissionStateOf(handle.record)
+  }
   async setPermission(sessionId, permissionMode) {
     if (!this.profile.permissionModes.includes(permissionMode)) {
       throw new Error(`${this.profile.pluginName}: unsupported ${this.profile.label} permission mode "${String(permissionMode)}"`)
@@ -474,6 +503,7 @@ export class CliDriverGateway extends TypertRemoteService {
     let detachSession
     let detachAgent
     const dispose = async () => {
+      agent.discoveryController.abort()
       agent.cancel({ kind: 'disposed' }, { keepInbox: false })
       await agent.whenIdle()
       detachAgent?.()
@@ -508,6 +538,7 @@ export class CliDriverGateway extends TypertRemoteService {
 export function createDriverApply(profiles) {
   const list = Array.isArray(profiles) ? profiles : [profiles]
   return async (ctx, config) => {
+    installNativeCommands(ctx, (agent) => agent instanceof CliDriverAgent)
     for (const profile of list) {
       ctx.llm.registerAdapter([profile.provider], new SentinelAdapter(profile))
       const gateway = new (profile.Gateway ?? CliDriverGateway)(ctx, config, profile)

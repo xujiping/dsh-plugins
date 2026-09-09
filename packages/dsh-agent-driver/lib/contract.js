@@ -61,3 +61,28 @@ export const permissionStateResultSchema = Object.freeze({
     return model === undefined ? base : { ...base, model }
   },
 })
+
+export const modelIdSchema = Object.freeze({
+  parse(value) {
+    if (typeof value !== 'string' || !value.trim()) throw invalid('modelId')
+    return value
+  },
+})
+export const modelListSchema = Object.freeze({
+  parse(value) {
+    if (!Array.isArray(value)) throw invalid('model list')
+    return value.map((item) => {
+      if (!item || typeof item.label !== 'string' || typeof item.description !== 'string') throw invalid('model option')
+      for (const key of ['providerId', 'providerLabel']) {
+        if (item[key] !== undefined && typeof item[key] !== 'string') throw invalid('model provider')
+      }
+      if (item.current !== undefined && typeof item.current !== 'boolean') throw invalid('current model')
+      return {
+        id: modelIdSchema.parse(item.id), label: item.label, description: item.description,
+        ...(item.providerId === undefined ? {} : { providerId: item.providerId }),
+        ...(item.providerLabel === undefined ? {} : { providerLabel: item.providerLabel }),
+        ...(item.current === undefined ? {} : { current: item.current }),
+      }
+    })
+  },
+})

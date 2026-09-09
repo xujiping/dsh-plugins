@@ -1,7 +1,16 @@
 #!/usr/bin/env node
 // Fake stream-json Claude process. It ignores flags and one JSONL user input.
 process.stdin.resume()
-process.stdin.once('data', () => {
+process.stdin.once('data', (chunk) => {
+  const request = JSON.parse(String(chunk).trim())
+  if (request.type === 'control_request') {
+    process.stdout.write(`${JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: request.request_id, response: { models: [{ value: 'sonnet', displayName: '测试 Sonnet', description: 'Claude 模型' }], commands: [
+      { name: 'model', description: '选择模型' },
+      { name: 'compact', description: 'Claude 压缩', argumentHint: '[instructions]' },
+      { name: 'plugin:review', description: '项目命令', argumentHint: '[path]' },
+    ] } } })}\n`)
+    return
+  }
   const events = [
     { type: 'system', subtype: 'init', session_id: process.argv.includes('--resume') ? 'resumed' : 'new', model: 'fake-claude', permissionMode: 'acceptEdits' },
     { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } } },

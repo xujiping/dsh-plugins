@@ -30,7 +30,7 @@ import {
 const { createAssistantMessage, createToolResultMessage } = await importDshModule('@deepseek-ai/dsh-llm')
 
 export const name = 'agent-driver'
-export const inject = ['agents', 'sessions', 'sessionPersistence', 'workspaceRegistry', 'llm']
+export const inject = ['agents', 'sessions', 'sessionPersistence', 'workspaceRegistry', 'llm', 'commands']
 
 export const CLAUDE_PROVIDER = 'claude-code-native'
 export const DEFAULT_MODEL = 'default'
@@ -268,6 +268,7 @@ export const CLAUDE_PROFILE = Object.freeze({
       // Claude CLI 的 --resume 不会可靠继承先前 -p 运行的权限模式，
       // 因此每轮都从 driver sidecar 显式传入当前会话选择。
       '--permission-mode', agent.permission.permissionMode,
+      ...(agent.permission.selectedModel ? ['--model', agent.permission.selectedModel] : []),
       ...(agent.config.safeMode ? ['--safe-mode'] : []),
       // Claude's --tools limits only built-ins. The strict empty MCP config is
       // required as well, otherwise user-level MCP servers remain available.

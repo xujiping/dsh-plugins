@@ -10,6 +10,7 @@
  * yolo 选 allow_once。turn 结束后终止进程组；ACP 会话持久化在 Hermes
  * 自己的存储里，下一轮用 acpSessionId 续接。
  */
+import { discoverHermesModels } from './hermes-models.js'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { importDshModule } from './dsh-runtime.js'
@@ -219,7 +220,10 @@ export async function consumeHermesAcp(agent, child, turn, step, signal, message
   if (session === undefined) session = await request('session/new', baseParams)
   await agent.observeAcpSessionId(String(session?.sessionId ?? ''))
 
-  const currentModel = session?.models?.currentModelId
+  if (agent.permission.selectedModel) {
+    await request('session/set_model', { sessionId: agent.permission.acpSessionId, modelId: agent.permission.selectedModel })
+  }
+  const currentModel = agent.permission.selectedModel ?? session?.models?.currentModelId
   if (typeof currentModel === 'string' && currentModel !== '') {
     // modelId 形如 "zai:glm-5.3-flash"；展示去掉 provider 前缀。
     await agent.observeModel(currentModel.includes(':') ? currentModel.split(':').pop() : currentModel)
@@ -230,7 +234,7 @@ export async function consumeHermesAcp(agent, child, turn, step, signal, message
   try {
     response = await request('session/prompt', {
       sessionId: agent.permission.acpSessionId,
-      prompt: [{ type: 'text', text: `${query}\n${FORMAT_DIRECTIVE}` }],
+      prompt: [{ type: 'text', text: query.startsWith('/') ? query : `${query}\n${FORMAT_DIRECTIVE}` }],
     })
   } finally {
     accepting = false
@@ -276,6 +280,7 @@ export const HERMES_PROFILE = Object.freeze({
   defaultPermissionMode: DEFAULT_HERMES_PERMISSION_MODE,
   errorCode: 'HERMES_CLI',
   configOf: hermesConfigOf,
+  discoverModels: discoverHermesModels,
   createIndex: (path) => new CliDriverIndex(path, DRIVER, DRIVER_VERSION),
   Gateway: HermesDriverGateway,
   // 提示词经 session/prompt JSON-RPC 传递，stdin 归 translate 管理。

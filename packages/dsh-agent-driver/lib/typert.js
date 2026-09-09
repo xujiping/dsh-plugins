@@ -32,6 +32,13 @@ function invocationOf(service, method, parameters, result) {
 
 function invocationsFor(service) {
   return [
+    invocationOf(service, 'getModels', [{ name: 'sessionId', wire: 'sessionId', source: 'json', codec: { mode: 'strict', typeSymbol: 'dsh-agent-driver#SessionId', schema: sessionIdSchema } }], {
+      mode: 'strict', typeSymbol: 'dsh-agent-driver#ModelList', schema: z.array(z.object({ id: z.string().min(1), label: z.string(), description: z.string(), providerId: z.string().optional(), providerLabel: z.string().optional(), current: z.boolean().optional() })),
+    }),
+    invocationOf(service, 'setModel', [
+      { name: 'sessionId', wire: 'sessionId', source: 'json', codec: { mode: 'strict', typeSymbol: 'dsh-agent-driver#SessionId', schema: sessionIdSchema } },
+      { name: 'modelId', wire: 'modelId', source: 'json', codec: { mode: 'strict', typeSymbol: 'dsh-agent-driver#ModelId', schema: z.string().min(1) } },
+    ], { mode: 'strict', typeSymbol: 'dsh-agent-driver#PermissionStateResult', schema: permissionStateResultSchema }),
     invocationOf(service, 'createSession', [{
       name: 'workspaceId',
       wire: 'workspaceId',

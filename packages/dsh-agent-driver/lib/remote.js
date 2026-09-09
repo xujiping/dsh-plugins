@@ -1,5 +1,7 @@
 /** Client Typert descriptor. Keep this in sync with ./typert.js. */
 import {
+  modelIdSchema,
+  modelListSchema,
   createSessionResultSchema,
   permissionModeSchema,
   permissionStateResultSchema,
@@ -22,6 +24,13 @@ function descriptorOf(service, method, parameters, result) {
 
 function descriptorsFor(service) {
   return [
+    descriptorOf(service, 'getModels', [{ name: 'sessionId', wire: 'sessionId', source: 'json', codec: { mode: 'strict', typeSymbol: 'dsh-agent-driver#SessionId', schema: sessionIdSchema } }], {
+      mode: 'strict', typeSymbol: 'dsh-agent-driver#ModelList', schema: modelListSchema,
+    }),
+    descriptorOf(service, 'setModel', [
+      { name: 'sessionId', wire: 'sessionId', source: 'json', codec: { mode: 'strict', typeSymbol: 'dsh-agent-driver#SessionId', schema: sessionIdSchema } },
+      { name: 'modelId', wire: 'modelId', source: 'json', codec: { mode: 'strict', typeSymbol: 'dsh-agent-driver#ModelId', schema: modelIdSchema } },
+    ], { mode: 'strict', typeSymbol: 'dsh-agent-driver#PermissionStateResult', schema: permissionStateResultSchema }),
     descriptorOf(service, 'createSession', [{
       name: 'workspaceId',
       wire: 'workspaceId',
