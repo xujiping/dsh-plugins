@@ -283,6 +283,23 @@ window.__ModuleLoader__.load({
 .dpet-pet[data-dir="-1"] .dpet-eye[data-side="l"] { left: 30%; }
 .dpet-pet[data-dir="-1"] .dpet-eye[data-side="r"] { right: 30%; }
 
+/* ---- day / night: subtly follow the GUI light/dark theme ----
+   Light (default)  = daytime look  (bright blue, crisp shadow)
+   Dark attribute   = nighttime look (deeper indigo, soft glow, pale eyes) */
+body[data-ds-dark-theme] .dpet-pet {
+  background: radial-gradient(120% 120% at 30% 22%,
+              #6f86d6 0%, #3a4a9f 78%);
+}
+body[data-ds-dark-theme] .dpet-foot {
+  background: #3a4a9f;
+}
+body[data-ds-dark-theme] .dpet-eye { background: #e8edfb; }
+body[data-ds-dark-theme] .dpet-mouth { border-color: #e8edfb; }
+body[data-ds-dark-theme] .dpet-root {
+  filter: drop-shadow(0 4px 8px rgba(0,0,0,0.45))
+          drop-shadow(0 0 6px rgba(111,134,214,0.35));
+}
+
 /* ---- keyframes ---- */
 @keyframes dpet-blink {
   0%, 92%, 100% { transform: scaleY(1); }
