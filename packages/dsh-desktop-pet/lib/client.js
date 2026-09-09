@@ -348,6 +348,8 @@ body[data-ds-dark-theme] .dpet-root {
   position: fixed;
   z-index: 45;
   min-width: 168px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   padding: 6px 0;
   border-radius: 10px;
   background: var(--dsw-bg-elevated, #fff);
@@ -671,12 +673,24 @@ body[data-ds-dark-theme] .dpet-root {
       QUICK_ACTIONS.forEach(({ label, hint, run }) => {
         menuEl.append(actRow(label, hint, run))
       })
-      // clamp menu inside the viewport
-      const x = Math.min(state.x, window.innerWidth - 190)
-      const y = Math.min(state.y + 88, window.innerHeight - 200)
-      menuEl.style.left = `${Math.max(8, x)}px`
-      menuEl.style.top = `${Math.max(8, y)}px`
+      // clamp menu fully inside the viewport using its REAL size
+      // (menu grew with the quick-action section; measure after append)
       document.body.append(menuEl)
+      const mw = menuEl.offsetWidth
+      const mh = menuEl.offsetHeight
+      let x = Math.min(state.x, window.innerWidth - mw - 8)
+      let y = state.y + 88
+      if (y + mh > window.innerHeight - 8) {
+        // not enough room below: flip above the pet (pet box is 84 tall)
+        y = state.y - mh - 8
+      }
+      if (y < 8) {
+        // still clipped (viewport shorter than the menu): pin to top,
+        // the page itself scrolls the overflow
+        y = 8
+      }
+      menuEl.style.left = `${Math.max(8, x)}px`
+      menuEl.style.top = `${y}px`
     }
 
     // ------------------------------------------------------- quick actions
