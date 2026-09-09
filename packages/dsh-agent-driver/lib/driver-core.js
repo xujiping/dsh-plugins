@@ -9,6 +9,7 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import { dirname, isAbsolute } from 'node:path'
 import { importDshModule } from './dsh-runtime.js'
 import { discoverModels, discoverCommands, installNativeCommands } from './commands.js'
@@ -35,6 +36,88 @@ export function normalizeUsage(usage) {
     outputTokens: usage.output_tokens,
     ...(Number.isFinite(usage.cache_read_input_tokens) ? { cacheReadInputTokens: usage.cache_read_input_tokens } : {}),
     ...(Number.isFinite(usage.cache_creation_input_tokens) ? { cacheCreationInputTokens: usage.cache_creation_input_tokens } : {}),
+  }
+}
+
+function approvalReason(toolName, input) {
+  const detail = toolName === 'Bash' && typeof input?.command === 'string'
+    ? input.command
+    : typeof input?.file_path === 'string'
+      ? input.file_path
+      : ''
+  return detail === '' ? `Claude Code 请求执行 ${toolName}` : `Claude Code 请求执行 ${toolName}：${detail.slice(0, 600)}`
+}
+
+/**
+ * 将 Claude Code 的 permission-prompt MCP 回调桥接到 DSH 的一次性审批面板。
+ * 只监听随机端口且要求每轮新令牌，MCP 子进程无法请求其他会话的授权。
+ */
+export async function createMcpApprovalBridge(agent, signal) {
+  const approval = agent.rootCtx.get('approval')
+  if (typeof approval?.request !== 'function') return undefined
+  const token = randomUUID()
+  const sockets = new Set()
+  const server = createServer((socket) => {
+    sockets.add(socket)
+    socket.setEncoding('utf8')
+    let buffer = ''
+    let authorized = false
+    const send = (payload) => {
+      if (!socket.destroyed) socket.write(`${JSON.stringify(payload)}\n`)
+    }
+    const handle = async (message) => {
+      if (!authorized) {
+        if (message?.type !== 'hello' || message.token !== token) return socket.destroy()
+        authorized = true
+        send({ type: 'ready' })
+        return
+      }
+      if (message?.type !== 'permission' || typeof message.id !== 'string' || typeof message.tool_name !== 'string' || message.tool_name.length === 0 || message.input === null || typeof message.input !== 'object' || Array.isArray(message.input)) {
+        return socket.destroy()
+      }
+      let outcome = 'unavailable'
+      try {
+        outcome = await approval.request({
+          agent,
+          toolName: message.tool_name,
+          reason: approvalReason(message.tool_name, message.input),
+          signal,
+        })
+      } catch { /* 审批审计失败也必须 fail-closed。 */ }
+      send({ type: 'permission-result', id: message.id, outcome })
+    }
+    socket.on('data', (chunk) => {
+      buffer += chunk
+      let newline
+      while ((newline = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, newline)
+        buffer = buffer.slice(newline + 1)
+        let message
+        try { message = JSON.parse(line) } catch { socket.destroy(); return }
+        void handle(message)
+      }
+    })
+    socket.once('close', () => sockets.delete(socket))
+  })
+  const address = await new Promise((resolve, reject) => {
+    const fail = (error) => reject(error)
+    server.once('error', fail)
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', fail)
+      resolve(server.address())
+    })
+  })
+  if (address === null || typeof address === 'string') {
+    server.close()
+    throw new Error('agent-driver: cannot allocate the local Claude approval bridge')
+  }
+  return {
+    port: address.port,
+    token,
+    close: async () => {
+      for (const socket of sockets) socket.destroy()
+      await new Promise((resolve) => server.close(() => resolve()))
+    },
   }
 }
 
@@ -206,7 +289,7 @@ export class CliDriverAgent {
   }
   /** 由 profile 决定实际 CLI 参数；通用核心不感知具体 CLI。 */
   commandArgs(firstTurn, message) {
-    return this.profile.commandArgs(this, firstTurn, message)
+    return this.profile.commandArgs(this, firstTurn, message, this.approvalBridge)
   }
   async observeEffectivePermissionMode(value) {
     if (typeof value !== 'string' || value.length === 0) return
@@ -255,13 +338,22 @@ export class CliDriverAgent {
     }
 
     let child
+    let approvalBridge
     try {
+      // 建立本地审批桥需要一次异步 listen。先占住 current，避免 whenIdle()
+      // 或取消逻辑把这段启动窗口误判成已完成的 turn。
+      this.current = { controller, child: undefined }
+      if (this.profile.createApprovalBridge !== undefined) {
+        approvalBridge = await this.profile.createApprovalBridge(this, controller.signal)
+        this.approvalBridge = approvalBridge
+      }
+      if (controller.signal.aborted) throw controller.signal.reason ?? new Error('cancelled')
       child = spawn(this.config.command, this.commandArgs(turn === 1, message), {
         cwd: this.session.header.cwd,
         detached: process.platform !== 'win32',
         stdio: ['pipe', 'pipe', 'pipe'],
       })
-      this.current = { child, controller }
+      this.current.child = child
       const exited = exitOf(child)
       const payload = {
         type: 'user',
@@ -295,6 +387,8 @@ export class CliDriverAgent {
       })
       if (!aborted) this.emit('agent/error', { turn, step, error })
     } finally {
+      this.approvalBridge = undefined
+      await approvalBridge?.close()
       this.current = undefined
       this.setStatus('idle')
     }
@@ -430,14 +524,16 @@ export class CliDriverGateway extends TypertRemoteService {
     }
     const handle = this.handles.get(sessionId)
     if (handle === undefined) throw new Error(`${this.profile.pluginName}: session "${sessionId}" is not a live native ${this.profile.label} session`)
-    if (handle.agent.status !== 'idle') {
-      throw new Error(`${this.profile.pluginName}: wait for the current ${this.profile.label} turn to finish before changing its permission mode`)
-    }
+    // 权限模式仅在下一轮 spawn CLI 时读取。运行中的子进程已经拿到了
+    // 自己的 --permission-mode，保存新选择只会作用于随后的一轮，不会改变
+    // 当前 CLI 的行为，因此无需阻止用户预先切换。保留已观测的实际模式，
+    // 让界面能在本轮结束前提示其仍与新选择不同。
+    const wasRunning = handle.agent.status !== 'idle'
     const next = { ...handle.record, permissionMode }
-    delete next.effectivePermissionMode
+    if (!wasRunning) delete next.effectivePermissionMode
     await this.persistRecord(next)
     Object.assign(handle.record, next)
-    delete handle.record.effectivePermissionMode
+    if (!wasRunning) delete handle.record.effectivePermissionMode
     return this.permissionStateOf(handle.record)
   }
   async observeEffectivePermission(sessionId, record, effectivePermissionMode) {

@@ -13,6 +13,7 @@
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { createInterface } from 'node:readline'
+import { fileURLToPath } from 'node:url'
 import { importDshModule } from './dsh-runtime.js'
 import { HERMES_PROFILE } from './hermes.js'
 import {
@@ -21,6 +22,7 @@ import {
   CliDriverIndex,
   SentinelAdapter,
   asJson,
+  createMcpApprovalBridge,
   createDriverApply,
   normalizeUsage,
   terminateProcessGroup,
@@ -30,7 +32,7 @@ import {
 const { createAssistantMessage, createToolResultMessage } = await importDshModule('@deepseek-ai/dsh-llm')
 
 export const name = 'agent-driver'
-export const inject = ['agents', 'sessions', 'sessionPersistence', 'workspaceRegistry', 'llm', 'commands']
+export const inject = ['agents', 'sessions', 'sessionPersistence', 'workspaceRegistry', 'llm', 'commands', 'approval']
 
 export const CLAUDE_PROVIDER = 'claude-code-native'
 export const DEFAULT_MODEL = 'default'
@@ -45,6 +47,7 @@ export const CLAUDE_PERMISSION_MODES = Object.freeze(['plan', 'acceptEdits', 'au
 export const DEFAULT_PERMISSION_MODE = 'acceptEdits'
 const DRIVER = 'claude-code-native'
 const DRIVER_VERSION = 2
+const PERMISSION_MCP_PATH = fileURLToPath(new URL('./claude-permission-mcp.js', import.meta.url))
 // 会话列表（dsh-client-ui-workspace）只渲染 displayTitle，不暴露 agent 信息。
 // 原生会话的自动标题落地后加此前缀，列表即可区分该会话由哪个 Agent 驱动。
 // 用 source: 'user' 固定（pin），避免后续 first-prompt 自动标题覆盖掉前缀。
@@ -252,7 +255,8 @@ export const CLAUDE_PROFILE = Object.freeze({
   legacyIndexPath: (rawConfig) => rawConfig.indexPath === undefined
     ? join(homedir(), '.dsh', 'cc-agent-driver', 'sessions.json')
     : undefined,
-  commandArgs(agent, firstTurn) {
+  createApprovalBridge: createMcpApprovalBridge,
+  commandArgs(agent, firstTurn, _message, approvalBridge) {
     const sessionFlag = firstTurn ? ['--session-id', agent.id] : ['--resume', agent.id]
     const tools = agent.config.tools.length === 0 ? [] : ['--tools', agent.config.tools.join(',')]
     // Extra args precede Claude flags so the fake CLI used by M0 can be run by
@@ -270,10 +274,19 @@ export const CLAUDE_PROFILE = Object.freeze({
       '--permission-mode', agent.permission.permissionMode,
       ...(agent.permission.selectedModel ? ['--model', agent.permission.selectedModel] : []),
       ...(agent.config.safeMode ? ['--safe-mode'] : []),
-      // Claude's --tools limits only built-ins. The strict empty MCP config is
-      // required as well, otherwise user-level MCP servers remain available.
+      // Claude's --tools limits only built-ins. The strict MCP config blocks
+      // user-level MCP servers; the sole exception is our per-turn local
+      // permission bridge, which relays prompts to DSH's ApprovalPanel.
       '--strict-mcp-config',
-      '--mcp-config', '{"mcpServers":{}}',
+      '--mcp-config', approvalBridge === undefined
+        ? '{"mcpServers":{}}'
+        : JSON.stringify({ mcpServers: {
+          dsh_approval: {
+            command: process.execPath,
+            args: [PERMISSION_MCP_PATH, String(approvalBridge.port), approvalBridge.token],
+          },
+        } }),
+      ...(approvalBridge === undefined ? [] : ['--permission-prompt-tool', 'mcp__dsh_approval__request_permission']),
       ...tools,
     ]
   },

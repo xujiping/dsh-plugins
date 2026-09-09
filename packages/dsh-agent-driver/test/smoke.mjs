@@ -204,6 +204,15 @@ assert.equal(assistantMessages.at(-1).data.message.source.model, 'fake-runtime-m
 assert.deepEqual(assistantMessages.at(-1).data.usage, { inputTokens: 10, outputTokens: 3 })
 assert.deepEqual(await gateway.getPermission(sessionId), { permissionMode: 'acceptEdits', effectivePermissionMode: 'acceptEdits', model: 'fake-claude' }, 'system/init reports the effective Claude permission mode and actual model')
 
+agent.status = 'running'
+const queuedPermission = await remoteGateway.invoke({
+  namespace: 'nativeAgent',
+  method: 'setPermission',
+  args: { sessionId, permissionMode: 'plan' },
+})
+assert.deepEqual(queuedPermission, { permissionMode: 'plan', effectivePermissionMode: 'acceptEdits', model: 'fake-claude' }, 'running turns can queue a permission choice for the next CLI process while exposing the current CLI mode')
+assert.equal(agent.commandArgs(false)[agent.commandArgs(false).indexOf('--permission-mode') + 1], 'plan', 'next CLI process receives a permission choice made during the preceding turn')
+agent.status = 'idle'
 const changedPermission = await remoteGateway.invoke({
   namespace: 'nativeAgent',
   method: 'setPermission',
@@ -212,15 +221,6 @@ const changedPermission = await remoteGateway.invoke({
 assert.deepEqual(changedPermission, { permissionMode: 'acceptEdits', model: 'fake-claude' })
 const resumedArgs = agent.commandArgs(false)
 assert.equal(resumedArgs[resumedArgs.indexOf('--permission-mode') + 1], 'acceptEdits', '--resume carries the persisted permission mode too')
-agent.status = 'running'
-const queuedPermission = await remoteGateway.invoke({
-  namespace: 'nativeAgent',
-  method: 'setPermission',
-  args: { sessionId, permissionMode: 'plan' },
-})
-assert.deepEqual(queuedPermission, { permissionMode: 'plan', model: 'fake-claude' }, 'running turns can queue a permission choice for the next CLI process')
-assert.equal(agent.commandArgs(false)[agent.commandArgs(false).indexOf('--permission-mode') + 1], 'plan', 'next CLI process receives a permission choice made during the preceding turn')
-agent.status = 'idle'
 await assert.rejects(
   () => remoteGateway.invoke({ namespace: 'nativeAgent', method: 'setPermission', args: { sessionId, permissionMode: 'bypassPermissions' } }),
   /permissionMode|bypassPermissions/,

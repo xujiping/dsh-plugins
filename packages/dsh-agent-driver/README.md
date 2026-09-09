@@ -42,6 +42,8 @@ dsh plugin --profile web add link:~/AiProjects/dsh-plugins/packages/dsh-agent-dr
 
 新会话默认是“计划”。选择会保存到 `sessions.json`，首轮和每次 `--resume` 都会明确传入 `--permission-mode`；CLI 初始化事件报告的实际生效模式会一并保存。运行中也可以切换：当前 CLI 回合保持原模式，新的选择从下一轮开始生效。
 
+在“自动编辑”下，文件编辑和常见文件操作会直接执行；`git`、测试、安装依赖等仍需确认。此类请求会接管 DSH 输入框并展示一次性的“允许／拒绝”审批面板；允许后 Claude Code 的同一轮会继续执行。该桥接只监听本轮随机令牌保护的本机回环端口，不会向其他会话或外部网络暴露审批能力。
+
 `manual`、`dontAsk` 和 `bypassPermissions` 不在界面中提供：当前非交互 `claude -p` 无法将 `manual` 的审批请求转换为 DSH 审批卡，`dontAsk` 需要独立的工具白名单，而 `bypassPermissions` 在没有额外 OS 隔离时不安全。
 
 ## Hermes

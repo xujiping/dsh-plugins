@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- 修复：Claude Code 的 `acceptEdits` 模式下，未被自动放行的 Bash 等工具请求不再直接失败。每轮 CLI 通过受随机令牌保护的本机 MCP 回环桥接，将 `--permission-prompt-tool` 回调转为 DSH 原生“允许／拒绝”审批面板；允许一次后同一 Claude 回合继续执行。
+
 - 修复：Claude Code 与 Hermes 原生会话在运行中切换权限不再报错。新选择会持久化并在下一轮 CLI 启动时生效，当前已启动的回合保持原权限模式。
 
 - 调整：Claude Code 与 Hermes 原生会话的当前模型名移至输入框右下角、发送按钮前；模型更新会随会话状态同步刷新。
