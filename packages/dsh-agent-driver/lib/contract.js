@@ -17,6 +17,9 @@ export const workspaceIdSchema = Object.freeze({
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 export const CLAUDE_PERMISSION_MODES = Object.freeze(['plan', 'acceptEdits', 'auto'])
+export const HERMES_PERMISSION_MODES = Object.freeze(['default', 'yolo'])
+// 线上权限枚举是两个 driver 档位的并集；具体会话支持哪些由各网关校验。
+export const PERMISSION_MODES = Object.freeze([...CLAUDE_PERMISSION_MODES, ...HERMES_PERMISSION_MODES])
 
 export const sessionIdSchema = Object.freeze({
   parse(value) {
@@ -27,7 +30,7 @@ export const sessionIdSchema = Object.freeze({
 
 export const permissionModeSchema = Object.freeze({
   parse(value) {
-    if (!CLAUDE_PERMISSION_MODES.includes(value)) throw invalid('permissionMode')
+    if (!PERMISSION_MODES.includes(value)) throw invalid('permissionMode')
     return value
   },
 })
@@ -51,6 +54,10 @@ export const permissionStateResultSchema = Object.freeze({
     if (effectivePermissionMode !== undefined && typeof effectivePermissionMode !== 'string') {
       throw invalid('permission state result')
     }
-    return effectivePermissionMode === undefined ? { permissionMode } : { permissionMode, effectivePermissionMode }
+    // model 为展示性字段：CLI 实际使用的模型，可能缺席（尚未探测到）。
+    const model = value.model
+    if (model !== undefined && typeof model !== 'string') throw invalid('permission state result')
+    const base = effectivePermissionMode === undefined ? { permissionMode } : { permissionMode, effectivePermissionMode }
+    return model === undefined ? base : { ...base, model }
   },
 })

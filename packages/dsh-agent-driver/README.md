@@ -1,6 +1,16 @@
 # dsh-agent-driver
 
-DSH 的原生智能体会话驱动（原 `dsh-cc-agent-driver`，为后续接入 Hermes、OpenClaw 等智能体改为通用命名）。当前实现驱动 Claude Code：每个会话使用同一个 UUID 作为 DSH Session ID 和 Claude Code `--session-id` / `--resume` ID；DSH 保存可回放事件，Claude Code 保存下一轮推理所需的本地会话。默认索引路径随改名迁移到 `~/.dsh/agent-driver/sessions.json`，启动时自动从旧路径 `~/.dsh/cc-agent-driver/sessions.json` 迁移存量会话（旧文件保留）。
+DSH 的原生智能体会话驱动（原 `dsh-cc-agent-driver`，为后续接入 Hermes、OpenClaw 等智能体改为通用命名）。当前驱动 Claude Code 与本地 Hermes 两个 CLI：每个会话使用同一个 UUID 作为 DSH Session ID 和 CLI 会话 ID（Claude Code 用 `--session-id` / `--resume`；Hermes 自生成会话 id，首轮捕获后持久化到 sidecar）。DSH 保存可回放事件，CLI 保存下一轮推理所需的本地会话。默认索引路径随改名迁移到 `~/.dsh/agent-driver/sessions.json`，启动时自动从旧路径 `~/.dsh/cc-agent-driver/sessions.json` 迁移存量会话（旧文件保留）。
+
+## 多智能体架构
+
+代码分为两层：
+
+- `lib/driver-core.js` —— 通用 CLI 驱动核心：Agent 生命周期（串行 turn、进程组取消）、会话原子发布/冷恢复、driver sidecar 索引、权限状态持久化、标题前缀、哨兵 LLM adapter。全部通过 `profile` 描述对象参数化。
+- `lib/index.js` —— Claude Code profile（`CLAUDE_PROFILE`）+ 兼容出口 + 双驱动 `apply`。
+- `lib/hermes.js` —— Hermes profile（`HERMES_PROFILE`）：基于 `hermes chat -q <query> -Q --source tool` 的每轮独立进程 + `--resume` 串联；`session_id:` 标记从 stderr 捕获，stdout 整段作为最终回复。
+
+接入新智能体（如 Codex、OpenClaw）：新建入口文件定义自己的 profile（约百行），用 `createDriverApply(profiles)` 组装 `apply` 即可（支持数组一次注册多个），通用机制零复制。`consumeClaudeJsonl` 的 provider/model 取自 `agent.options`，兼容 Anthropic stream-json 格式的 CLI 可直接复用；提示词不走 stdin 的 CLI 用 `promptInput` 钩子改为 argv 传递。
 
 当前实现完成了 M0 的驱动主链路：严格 Typert Remote descriptor、自定义 Agent/Session 原子发布、Web 新会话菜单、fake `stream-json` CLI 事件转换、整组子进程取消，以及不含密钥的 driver sidecar 索引。首轮/续接 JSONL 已按真实 Claude Code 采样；真实 DSH Web Host 已验证创建、重启恢复和一条无工具流式请求。
 
@@ -32,7 +42,26 @@ dsh plugin --profile web add link:~/AiProjects/dsh-plugins/packages/dsh-agent-dr
 
 `manual`、`dontAsk` 和 `bypassPermissions` 不在界面中提供：当前非交互 `claude -p` 无法将 `manual` 的审批请求转换为 DSH 审批卡，`dontAsk` 需要独立的工具白名单，而 `bypassPermissions` 在没有额外 OS 隔离时不安全。
 
+## Hermes
+
+新会话菜单提供「Hermes（原生会话）」，走本机 `hermes` CLI（`~/.local/bin/hermes`）的 **ACP 模式**（`hermes acp`，编辑器集成同款 JSON-RPC 通道）。与 Claude Code 驱动的差异：
+
+- 流式输出：每个 DSH turn 独立 spawn 一个 `hermes acp`，`agent_thought_chunk`（思考）/ `agent_message_chunk`（正文）/ `tool_call`（工具调用）实时转发为 DSH 事件，turn 结束附 usage 统计。
+- 会话串联：ACP 会话 id（`session/new` 返回）写入独立 sidecar（`~/.dsh/hermes-agent-driver/sessions.json`，`acpSessionId` 字段），后续轮次 `session/load` 续接（历史 replay 通知被丢弃，DSH 自己有可回放事件）；冷重启后可继续。注意：v1 静默模式时代的旧会话无法续接（id 体系不同），会从新 ACP 会话开始。
+- 权限档位两档：`安全`（默认，`session/request_permission` 一律拒绝，fail-closed）与 `自动`（应答 `allow_once`，谨慎使用）。
+- 模型显示：取自 `session/new`/`session/load` 响应的 `models.currentModelId`（去掉 provider 前缀）。
+- turn 完成后驱动主动终止 ACP 服务器进程组（profile 声明 `tolerateUncleanExit`，退出码不作数）。
+- 标题前缀 `Hermes · <主题>`，与 Claude Code 会话在列表中可区分。
+
 DSH `0.1.0-rc.6` 尚未提供 provider 专属 access-mode 插槽。本包通过官方 `conversation.input.left` 插槽渲染 Claude 控件，并仅在原生会话时隐藏 DSH 的全局 access 控件；升级 DSH 时应做一次界面回归，确认其无障碍标签仍包含“访问模式”或“Access mode”。
+
+## 模型显示
+
+原生会话中官方模型切换器被隐藏（模型由 CLI 本机配置决定），取而代之在权限控件左侧显示一个只读模型名：
+
+- Claude Code：来自 stream-json `system/init` 事件的 `model` 字段，首轮后出现。
+- Hermes：来自 ACP `session/new` / `session/load` 响应的 `models.currentModelId`（去掉 `provider:` 前缀）。
+- 模型名持久化在各 driver sidecar（展示性字段），随 `getPermission` 一并返回。想换模型请到对应 CLI 修改（`claude` settings / `hermes model`）。
 
 ## 验证
 
@@ -43,4 +72,4 @@ npm test
 
 ## 配置
 
-`cordis.patch.yml` 的插件 config 可选字段：`command`、`args`、`tools`、`indexPath`、`securityProfile`、`safeMode`。未配置 `tools` 时使用 `Bash,Read,Glob,Grep,Edit,Write`；如需只读会话，可显式设为 `['Read', 'Glob', 'Grep']`。`safeMode` 默认为 `true`；`args` 不能传 bypass 权限参数，也不能传 `--permission-mode`（它由会话控件管理）。`indexPath` 默认是 `~/.dsh/cc-agent-driver/sessions.json`，只保存 driver 标识、UUID、版本、安全配置和权限模式，不保存 token 或 Claude 另一个 session ID。
+`cordis.patch.yml` 的插件 config 可选字段：`command`、`args`、`tools`、`indexPath`、`securityProfile`、`safeMode`。未配置 `tools` 时使用 `Bash,Read,Glob,Grep,Edit,Write`；如需只读会话，可显式设为 `['Read', 'Glob', 'Grep']`。`safeMode` 默认为 `true`；`args` 不能传 bypass 权限参数，也不能传 `--permission-mode`（它由会话控件管理）。`indexPath` 默认是 `~/.dsh/agent-driver/sessions.json`（旧版 `~/.dsh/cc-agent-driver/sessions.json` 会在启动时自动迁移，旧文件保留），只保存 driver 标识、UUID、版本、安全配置和权限模式，不保存 token 或 Claude 另一个 session ID。

@@ -25,7 +25,7 @@ window.__ModuleLoader__.load({
         return { sessionId: value.sessionId }
       },
     }
-    const permissionModes = ['plan', 'acceptEdits', 'auto']
+    const permissionModes = ['plan', 'acceptEdits', 'auto', 'default', 'yolo']
     const sessionIdSchema = {
       parse(value) {
         if (typeof value !== 'string' || !uuid.test(value)) throw new TypeError('agent-driver: invalid sessionId')
@@ -45,9 +45,53 @@ window.__ModuleLoader__.load({
         if (value.effectivePermissionMode !== undefined && typeof value.effectivePermissionMode !== 'string') {
           throw new TypeError('agent-driver: invalid permission state result')
         }
-        return value.effectivePermissionMode === undefined ? { permissionMode } : { permissionMode, effectivePermissionMode: value.effectivePermissionMode }
+        if (value.model !== undefined && typeof value.model !== 'string') {
+          throw new TypeError('agent-driver: invalid permission state result')
+        }
+        const base = value.effectivePermissionMode === undefined
+          ? { permissionMode }
+          : { permissionMode, effectivePermissionMode: value.effectivePermissionMode }
+        return value.model === undefined ? base : { ...base, model: value.model }
       },
     }
+    // Hermes 原生驱动复用同一套契约，只是挂在 hermesAgent 命名空间。
+    const hermesDescriptors = [{
+      id: 'dsh-agent-driver#hermesAgent/createSession',
+      service: 'hermesAgent', namespace: 'hermesAgent', method: 'createSession', invocation: { kind: 'direct' },
+      parameters: [{
+        name: 'workspaceId', wire: 'workspaceId', source: 'json',
+        codec: { mode: 'strict', typeSymbol: 'dsh-agent-driver#WorkspaceId', schema: workspaceIdSchema },
+      }],
+      result: {
+        mode: 'strict', typeSymbol: 'dsh-agent-driver#CreateSessionResult', schema: createSessionResultSchema,
+      },
+      sourceLocation: { file: 'lib/index.js', line: 1, column: 1 },
+    }, {
+      id: 'dsh-agent-driver#hermesAgent/getPermission',
+      service: 'hermesAgent', namespace: 'hermesAgent', method: 'getPermission', invocation: { kind: 'direct' },
+      parameters: [{
+        name: 'sessionId', wire: 'sessionId', source: 'json',
+        codec: { mode: 'strict', typeSymbol: 'dsh-agent-driver#SessionId', schema: sessionIdSchema },
+      }],
+      result: {
+        mode: 'strict', typeSymbol: 'dsh-agent-driver#PermissionStateResult', schema: permissionStateResultSchema,
+      },
+      sourceLocation: { file: 'lib/index.js', line: 1, column: 1 },
+    }, {
+      id: 'dsh-agent-driver#hermesAgent/setPermission',
+      service: 'hermesAgent', namespace: 'hermesAgent', method: 'setPermission', invocation: { kind: 'direct' },
+      parameters: [{
+        name: 'sessionId', wire: 'sessionId', source: 'json',
+        codec: { mode: 'strict', typeSymbol: 'dsh-agent-driver#SessionId', schema: sessionIdSchema },
+      }, {
+        name: 'permissionMode', wire: 'permissionMode', source: 'json',
+        codec: { mode: 'strict', typeSymbol: 'dsh-agent-driver#PermissionMode', schema: permissionModeSchema },
+      }],
+      result: {
+        mode: 'strict', typeSymbol: 'dsh-agent-driver#PermissionStateResult', schema: permissionStateResultSchema,
+      },
+      sourceLocation: { file: 'lib/index.js', line: 1, column: 1 },
+    }]
     const contribution = {
       package: 'dsh-agent-driver',
       descriptors: [{
@@ -90,12 +134,13 @@ window.__ModuleLoader__.load({
           mode: 'strict', typeSymbol: 'dsh-agent-driver#PermissionStateResult', schema: permissionStateResultSchema,
         },
         sourceLocation: { file: 'lib/index.js', line: 1, column: 1 },
-      }],
+      }, ...hermesDescriptors],
     }
 
     const NEW_SESSION_LABELS = ['新会话', 'New Session', '新建会话', 'New session']
     let ctx = null
     let nativeAgent = null
+    let hermesAgent = null
     let menu = null
     let backdrop = null
     let notice = null
@@ -165,11 +210,12 @@ window.__ModuleLoader__.load({
       menu.setAttribute('aria-label', '选择新会话类型')
       menu.append(
         button('默认 DeepSeek Harness', '使用当前默认模型', createHarnessSession),
-        button('Claude Code（原生会话）', '本机 Claude CLI；默认只读工具和安全模式', createNativeSession),
+        button('Claude Code（原生会话）', '本机 Claude CLI；默认只读工具和安全模式', () => createNativeSession(nativeAgent, 'Claude Code')),
+        button('Hermes（原生会话）', '本机 Hermes CLI；ACP 流式输出，权限分安全/自动', () => createNativeSession(hermesAgent, 'Hermes')),
       )
       notice = document.createElement('div')
       notice.dataset.agentDriver = 'notice'
-      notice.textContent = nativeAgent === null ? '正在连接原生会话服务…' : ''
+      notice.textContent = nativeAgent === null && hermesAgent === null ? '正在连接原生会话服务…' : ''
       menu.append(notice)
       document.body.append(backdrop, menu)
 
@@ -217,9 +263,9 @@ window.__ModuleLoader__.load({
       }
     }
 
-    async function createNativeSession() {
+    async function createNativeSession(remote, agentLabel) {
       if (creating) return
-      if (ctx === null || nativeAgent === null) {
+      if (ctx === null || remote === null) {
         setNotice('原生会话服务尚未就绪，请稍候重试。', true)
         return
       }
@@ -229,9 +275,9 @@ window.__ModuleLoader__.load({
         return
       }
       creating = true
-      setNotice('正在创建 Claude Code 原生会话…')
+      setNotice(`正在创建 ${agentLabel} 原生会话…`)
       try {
-        const created = await nativeAgent.createSession(target)
+        const created = await remote.createSession(target)
         if (!created.ok) throw new Error(`${created.error.code}: ${created.error.message}`)
         // The Host seeds this session's request header with the native route.
         // Calling generic selectModel here would overwrite DSH's persisted
@@ -245,19 +291,33 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // 各驱动的权限档位不同：Claude Code 用 plan/acceptEdits/auto，
+    // Hermes 用 default（危险操作自动拒绝）/yolo（跳过审批）。
     const PERMISSION_OPTIONS = Object.freeze({
-      plan: {
-        label: '计划',
-        description: '仅分析和读取；修改前请切换权限。',
-      },
-      acceptEdits: {
-        label: '自动编辑',
-        description: '允许工作区文件修改；Git 提交和推送仍可能被拒绝。',
-      },
-      auto: {
-        label: '自动',
-        description: '由 Claude 的安全分类器自动决定是否执行。',
-      },
+      claude: Object.freeze({
+        plan: {
+          label: '计划',
+          description: '仅分析和读取；修改前请切换权限。',
+        },
+        acceptEdits: {
+          label: '自动编辑',
+          description: '允许工作区文件修改；Git 提交和推送仍可能被拒绝。',
+        },
+        auto: {
+          label: '自动',
+          description: '由 Claude 的安全分类器自动决定是否执行。',
+        },
+      }),
+      hermes: Object.freeze({
+        default: {
+          label: '安全',
+          description: '非交互运行时危险操作审批自动拒绝（fail-closed）。',
+        },
+        yolo: {
+          label: '自动',
+          description: '跳过 Hermes 的危险操作审批（--yolo），请谨慎使用。',
+        },
+      }),
     })
 
     function remoteValue(result) {
@@ -267,13 +327,20 @@ window.__ModuleLoader__.load({
     }
 
     async function getPermissionState(sessionId) {
-      if (nativeAgent === null) throw new Error('原生会话服务尚未就绪')
-      return remoteValue(await nativeAgent.getPermission(sessionId))
+      // 同一会话只属于一个驱动；依次探测，记录归属以便 setPermission 走对网关。
+      for (const [driver, remote] of [['claude', nativeAgent], ['hermes', hermesAgent]]) {
+        if (remote === null) continue
+        try {
+          return { driver, state: remoteValue(await remote.getPermission(sessionId)) }
+        } catch { /* 会话不属于该驱动 */ }
+      }
+      throw new Error('原生会话服务尚未就绪')
     }
 
-    async function setPermissionState(sessionId, permissionMode) {
-      if (nativeAgent === null) throw new Error('原生会话服务尚未就绪')
-      return remoteValue(await nativeAgent.setPermission(sessionId, permissionMode))
+    async function setPermissionState(driver, sessionId, permissionMode) {
+      const remote = driver === 'hermes' ? hermesAgent : nativeAgent
+      if (remote === null) throw new Error('原生会话服务尚未就绪')
+      return remoteValue(await remote.setPermission(sessionId, permissionMode))
     }
 
     function NativePermissionSelect({ session }) {
@@ -282,6 +349,24 @@ window.__ModuleLoader__.load({
       const [open, setOpen] = React.useState(false)
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState('')
+      const rootRef = React.useRef(null)
+
+      // 点击控件外部或按 Esc 时自动收起浮层
+      React.useEffect(() => {
+        if (!open) return
+        const onPointerDown = (event) => {
+          if (rootRef.current !== null && !rootRef.current.contains(event.target)) setOpen(false)
+        }
+        const onKeyDown = (event) => {
+          if (event.key === 'Escape') setOpen(false)
+        }
+        document.addEventListener('pointerdown', onPointerDown, true)
+        document.addEventListener('keydown', onKeyDown, true)
+        return () => {
+          document.removeEventListener('pointerdown', onPointerDown, true)
+          document.removeEventListener('keydown', onKeyDown, true)
+        }
+      }, [open])
 
       React.useEffect(() => {
         let active = true
@@ -300,22 +385,24 @@ window.__ModuleLoader__.load({
       }, [sessionId])
 
       if (state === undefined || state === null || typeof sessionId !== 'string') return null
-      const option = PERMISSION_OPTIONS[state.permissionMode]
+      const options = PERMISSION_OPTIONS[state.driver]
+      if (options === undefined) return null
+      const option = options[state.state.permissionMode]
       if (option === undefined) return null
-      const effective = state.effectivePermissionMode
-      const title = effective !== undefined && effective !== state.permissionMode
+      const effective = state.state.effectivePermissionMode
+      const title = effective !== undefined && effective !== state.state.permissionMode
         ? `${option.description} 当前 CLI 生效模式：${effective}。`
         : option.description
       const choose = async (permissionMode) => {
-        if (busy || permissionMode === state.permissionMode) {
+        if (busy || permissionMode === state.state.permissionMode) {
           setOpen(false)
           return
         }
         setBusy(true)
         setError('')
         try {
-          const next = await setPermissionState(sessionId, permissionMode)
-          setState(next)
+          const next = await setPermissionState(state.driver, sessionId, permissionMode)
+          setState({ driver: state.driver, state: next })
           setOpen(false)
         } catch (cause) {
           setError(cause instanceof Error ? cause.message : String(cause))
@@ -323,23 +410,27 @@ window.__ModuleLoader__.load({
           setBusy(false)
         }
       }
-      return h('div', { className: 'dsh-agent-permission', 'data-mode': state.permissionMode },
+      return h('div', { ref: rootRef, className: 'dsh-agent-permission', 'data-mode': state.state.permissionMode },
+        state.state.model === undefined ? null : h('span', {
+          className: 'dsh-agent-model',
+          title: `${state.driver === 'hermes' ? 'Hermes' : 'Claude Code'} 当前实际使用的模型`,
+        }, state.state.model),
         h('button', {
           type: 'button',
           className: 'dsh-agent-permissionTrigger',
-          'aria-label': `Claude Code 权限，当前：${option.label}`,
+          'aria-label': `原生会话权限，当前：${option.label}`,
           title,
           disabled: busy,
           onClick: () => setOpen(!open),
         }, h('span', { 'aria-hidden': true, className: 'dsh-agent-permissionIcon' }, '⌁'), h('span', null, option.label), h('span', { 'aria-hidden': true, className: 'dsh-agent-permissionChevron' }, open ? '⌃' : '⌄')),
-        open ? h('div', { className: 'dsh-agent-permissionPopover', role: 'dialog', 'aria-label': '选择 Claude Code 权限' },
-          permissionModes.map((permissionMode) => {
-            const item = PERMISSION_OPTIONS[permissionMode]
+        open ? h('div', { className: 'dsh-agent-permissionPopover', role: 'dialog', 'aria-label': '选择原生会话权限' },
+          Object.keys(options).map((permissionMode) => {
+            const item = options[permissionMode]
             return h('button', {
               key: permissionMode,
               type: 'button',
               className: 'dsh-agent-permissionOption',
-              'data-current': permissionMode === state.permissionMode ? 'true' : 'false',
+              'data-current': permissionMode === state.state.permissionMode ? 'true' : 'false',
               disabled: busy,
               onClick: () => { void choose(permissionMode) },
             }, h('span', { className: 'dsh-agent-permissionOptionName' }, item.label), h('span', { className: 'dsh-agent-permissionOptionDesc' }, item.description))
@@ -391,22 +482,29 @@ window.__ModuleLoader__.load({
 [data-agent-driver="notice"][data-error="true"] { color: var(--dsw-alias-state-error-primary, #b42318); }
 /* DSH rc.6 没有 provider 专属 access-mode 插槽。原始控件在原生会话中
    仅代表 DSH sandbox，保留会造成误导；此兼容规则只隐藏它，新控件本身
-   通过 conversation.input.left 的官方 slot 注册。 */
+   通过 conversation.input.left 的官方 slot 注册。
+   模型切换器同理：原生会话的模型由 CLI 本机配置决定（Claude settings /
+   hermes model），官方选择器走 session.selectModel（普通会话专用且持久化
+   全局默认），在原生会话中既显示不准也可能污染全局选择，因此一并隐藏；
+   想换模型请到对应 CLI 里改配置。 */
 body[data-native-agent-access="true"] button[aria-label*="访问模式"],
-body[data-native-agent-access="true"] button[aria-label*="Access mode"] { display: none !important; }
+body[data-native-agent-access="true"] button[aria-label*="Access mode"],
+body[data-native-agent-access="true"] button[aria-label^="选择模型"],
+body[data-native-agent-access="true"] button[aria-label^="Select model"] { display: none !important; }
 .dsh-agent-permission { position: relative; display: inline-flex; align-items: center; min-width: 0; }
-.dsh-agent-permissionTrigger { min-width: 0; max-width: 220px; height: 28px; display: inline-flex; align-items: center; gap: 4px; padding: 0 4px 0 8px; border: 0; border-radius: 24px; outline: none; background: transparent; color: var(--dsw-alias-label-secondary, #666); font: 500 13px/20px inherit; cursor: pointer; }
+.dsh-agent-model { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-caption, #8a8a8a); font-size: 12px; line-height: 17px; padding: 0 4px 0 10px; }
+.dsh-agent-permissionTrigger { min-width: 0; max-width: 240px; height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 6px 0 10px; border: 0; border-radius: 24px; outline: none; background: transparent; color: var(--dsw-alias-label-secondary, #666); font: 500 14px/22px inherit; cursor: pointer; }
 .dsh-agent-permissionTrigger:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,.06)); }
 .dsh-agent-permissionTrigger:focus-visible { box-shadow: 0 0 0 2px var(--dsw-alias-border-l3, rgba(0,0,0,.18)); }
 .dsh-agent-permissionTrigger:disabled { cursor: default; opacity: .62; }
-.dsh-agent-permissionIcon { font-size: 16px; line-height: 1; transform: rotate(-25deg); }
-.dsh-agent-permissionChevron { color: var(--dsw-alias-label-caption, #8a8a8a); font-size: 14px; line-height: 1; }
+.dsh-agent-permissionIcon { font-size: 18px; line-height: 1; transform: rotate(-25deg); }
+.dsh-agent-permissionChevron { color: var(--dsw-alias-label-caption, #8a8a8a); font-size: 16px; line-height: 1; }
 .dsh-agent-permissionPopover { position: absolute; z-index: 50; left: 0; bottom: calc(100% + 8px); width: min(300px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 2px; padding: 6px; border: 1px solid var(--dsw-alias-border-l2, rgba(0,0,0,.12)); border-radius: 10px; background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-3, #fff)); box-shadow: 0 8px 24px rgba(0,0,0,.16); }
 .dsh-agent-permissionOption { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--dsw-alias-label-primary, #1a1a1a); font: inherit; text-align: left; cursor: pointer; }
 .dsh-agent-permissionOption:hover:not(:disabled), .dsh-agent-permissionOption[data-current="true"] { background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,.06)); }
 .dsh-agent-permissionOption:disabled { cursor: default; opacity: .62; }
-.dsh-agent-permissionOptionName { font-size: 14px; font-weight: 600; line-height: 20px; }
-.dsh-agent-permissionOptionDesc { color: var(--dsw-alias-label-secondary, #666); font-size: 12px; line-height: 17px; }
+.dsh-agent-permissionOptionName { font-size: 14px; font-weight: 600; line-height: 22px; }
+.dsh-agent-permissionOptionDesc { color: var(--dsw-alias-label-secondary, #666); font-size: 13px; line-height: 18px; }
 .dsh-agent-permissionError { padding: 4px 10px 2px; color: var(--dsw-alias-state-error-primary, #b42318); font-size: 12px; line-height: 17px; }
 `
       document.head.appendChild(style)
@@ -426,7 +524,8 @@ body[data-native-agent-access="true"] button[aria-label*="Access mode"] { displa
       clientCtx.effect(async () => {
         const dispose = await clientCtx.remote.$mount(contribution)
         nativeAgent = clientCtx.reflect.get('remote.nativeAgent') ?? null
-        if (nativeAgent === null) throw new Error('agent-driver: nativeAgent Remote namespace did not mount')
+        hermesAgent = clientCtx.reflect.get('remote.hermesAgent') ?? null
+        if (nativeAgent === null && hermesAgent === null) throw new Error('agent-driver: no native agent Remote namespace mounted')
         if (notice !== null) setNotice('')
         if (typeof document !== 'undefined') {
           registerPermissionControl(clientCtx)
@@ -440,6 +539,7 @@ body[data-native-agent-access="true"] button[aria-label*="Access mode"] { displa
           if (typeof document !== 'undefined') delete document.body.dataset.nativeAgentAccess
           permissionSlotRegistered = false
           nativeAgent = null
+          hermesAgent = null
           void dispose()
         }
       }, 'agent-driver: Remote')
