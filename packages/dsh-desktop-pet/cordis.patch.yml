@@ -3,8 +3,8 @@
 # field) over dsh-base; activate with `dsh plugin --profile <name> add
 # dsh-desktop-pet` (npm) or the monorepo link path.
 #
-# The row is a bare plugin by package name: the host half (exports ".") is a
-# no-op, and the `dsh.client` declaration in package.json makes the browser
+# Host 半边注册本机重启接口；`dsh.client` 声明使浏览器半边加载。
+# The `dsh.client` declaration in package.json makes the browser
 # half (exports "./client") load in the web GUI, where it mounts the desktop
 # pet overlay.
 - insert:

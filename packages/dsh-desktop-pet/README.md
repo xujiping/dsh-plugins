@@ -36,9 +36,39 @@ dsh plugin --profile web add link:~/AiProjects/dsh-plugins/packages/dsh-desktop-
 
 装完重启 `dsh web` 生效。开发期 `pnpm run dev:web` 下的 client HMR 会即时生效。
 
+## 重启 Web 服务
+
+右键宠物，选择「重启 DSH Web」，确认后会中断当前任务并重启服务。插件沿用当前
+CLI 参数、工作目录和环境变量；等待旧进程退出后启动新进程，页面在服务恢复后自动刷新。
+仅支持标准 `dsh` CLI 启动的固定端口服务，不支持 Electron 托管进程或 `--port 0`。
+重新启动的进程在后台运行，输出写入 `~/.dsh/logs/desktop-pet-restart.log`。
+新增了 Host 接口，已有安装需要先手动重启一次 DSH Web 才能使用此功能。
+
+接口仅接受本机回环连接；重启请求还校验同源信息及操作标识。验证命令：
+
+```bash
+node test/smoke.mjs
+```
+
+## 提醒通道（SSE + 版本检查）
+
+Host 半边注册 `GET /api/dsh-desktop-pet/events` 的 SSE 长连接（仅本机同源），客户端
+`EventSource` 订阅；收到提醒时宠物切 `happy` 并在气泡显示标题 8 秒。已看过的提醒 id
+记在 `localStorage`（`dpet.seen-notices`），刷新/重连不重复打扰；断线由 `EventSource`
+自动重连，重连后服务端回放最近 20 条历史（客户端按 seen 过滤）。
+
+内置检查器：**DSH 新版本**——启动 15 秒后首查，此后每 12 小时复查 npm dist-tags
+（registry 依次尝试 npmjs / npmmirror，可用环境变量 `DSH_PET_NPM_REGISTRY` 覆盖），
+发现比当前版本新即推送 `dsh-update:<version>` 提醒。当前版本优先从依赖树解析
+`@deepseek-ai/dsh/package.json`，回退到 `process.argv[1]`（bin.js）旁的 package.json。
+
+后续可按同一 `notifier.publish({ id, kind, icon, title, body })` 契约扩展插件更新、
+模型额度等检查器。接口仅接受本机回环连接（同 restart 路由的信任围栏）。
+
 ## 控制台调试
 
 ```js
 window.__dshDesktopPet.setAction('eat')   // 手动切换动作
 window.__dshDesktopPet.dispose()          // 手动卸载
+window.__dshDesktopPet.lastNotice         // 最近收到的一条提醒
 ```

@@ -129,6 +129,7 @@ window.__ModuleLoader__.load({
       rafId: 0,
       disposed: false,
       root: null, pet: null, bubble: null,
+      lastNotice: null,
     }
 
     // ------------------------------------------------------------ lifecycle
@@ -351,17 +352,17 @@ body[data-ds-dark-theme] .dpet-root {
   overflow-y: auto;
   padding: 6px 0;
   border-radius: 10px;
-  background: var(--dsw-bg-elevated, #fff);
-  border: 1px solid rgba(0,0,0,0.1);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.16);
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l2);
+  box-shadow: var(--dsw-shadow-lv3);
   font: 12px/1.6 -apple-system, "PingFang SC", "Segoe UI", sans-serif;
-  color: var(--dsw-fg, #1c2333);
+  color: var(--dsw-alias-label-primary);
 }
 .dpet-menu-head {
   padding: 4px 12px 6px;
   font-size: 11px;
   opacity: 0.55;
-  border-bottom: 1px solid rgba(0,0,0,0.06);
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
   margin-bottom: 4px;
 }
 .dpet-menu-item {
@@ -373,7 +374,7 @@ body[data-ds-dark-theme] .dpet-root {
   cursor: pointer;
   white-space: nowrap;
 }
-.dpet-menu-item:hover { background: rgba(77,107,254,0.08); }
+.dpet-menu-item:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .dpet-menu-item .dpet-opt {
   display: inline-flex;
   gap: 2px;
@@ -385,22 +386,22 @@ body[data-ds-dark-theme] .dpet-root {
   opacity: 0.55;
 }
 .dpet-menu-item .dpet-seg[data-on="true"] {
-  background: var(--dsw-static-deepseek-500, #4d6bfe);
-  color: #fff;
+  background: var(--dsw-alias-button-info-fill);
+  color: var(--dsw-alias-label-primary-foreground);
   opacity: 1;
 }
 .dpet-menu-item .dpet-check {
   width: 15px; height: 15px;
   border-radius: 4px;
-  border: 1px solid rgba(0,0,0,0.25);
+  border: 1px solid var(--dsw-alias-border-l2);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-size: 11px;
-  color: #fff;
+  color: var(--dsw-alias-label-primary-foreground);
 }
 .dpet-menu-item .dpet-check[data-on="true"] {
-  background: var(--dsw-static-deepseek-500, #4d6bfe);
+  background: var(--dsw-alias-button-info-fill);
   border-color: transparent;
 }
 /* quick-action section inside the config menu */
@@ -408,7 +409,7 @@ body[data-ds-dark-theme] .dpet-root {
   padding: 4px 12px 2px;
   font-size: 11px;
   opacity: 0.55;
-  border-top: 1px solid rgba(0,0,0,0.08);
+  border-top: 1px solid var(--dsw-alias-border-l2);
   margin-top: 4px;
 }
 .dpet-menu-item .dpet-act {
@@ -693,9 +694,7 @@ body[data-ds-dark-theme] .dpet-root {
     }
 
     // ------------------------------------------------------- quick actions
-    // Utility tricks surfaced in the right-click menu. All browser-side;
-    // the new-session one needs the cordis client context (see apply()).
-    let clientCtx = null
+    // 右键菜单快捷操作；重启调用 Host 接口。
 
     function actRow(label, hint, run) {
       const row = document.createElement('div')
@@ -714,27 +713,44 @@ body[data-ds-dark-theme] .dpet-root {
       return row
     }
 
+    let restarting = false
+    async function restartWeb() {
+      if (restarting) return
+      if (!window.confirm('重启 DSH Web 会中断正在运行的任务。是否继续？')) return
+      restarting = true
+      const endpoint = '/api/dsh-desktop-pet/restart'
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST', headers: { 'X-DSH-Pet-Action': 'restart' },
+          signal: AbortSignal.timeout(8000),
+        })
+        const result = await response.json()
+        if (!response.ok) throw new Error(result.error || '重启请求失败')
+        setAction('work')
+        const deadline = Date.now() + 60000
+        while (Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 1000))
+          try {
+            const status = await fetch(endpoint, { cache: 'no-store', signal: AbortSignal.timeout(2000) })
+            if (status.ok && (await status.json()).instance !== result.instance) {
+              location.reload()
+              return
+            }
+          } catch { /* 重启期间连接暂时不可用，继续等待。 */ }
+        }
+        throw new Error('等待服务恢复超时，请检查 ~/.dsh/logs/desktop-pet-restart.log，必要时手动启动 DSH Web')
+      } catch (error) {
+        window.alert(`重启 DSH Web：${error.message}`)
+      } finally {
+        restarting = false
+        setAction('idle')
+      }
+    }
+
     const QUICK_ACTIONS = [
       {
-        label: '🔄 刷新页面', hint: 'F5',
-        run: () => location.reload(),
-      },
-      {
-        label: '⬇️ 滚动到最新消息', hint: '',
-        run: () => {
-          const scroller = document.querySelector('[data-conversation-scroll]')
-          if (scroller) scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' })
-        },
-      },
-      {
-        label: '➕ 新建会话', hint: '',
-        run: () => {
-          try {
-            clientCtx?.get('workspaces').startSession()
-          } catch (error) {
-            console.warn('[dsh-desktop-pet] startSession failed:', error)
-          }
-        },
+        label: '⏻ 重启 DSH Web', hint: '中断任务',
+        run: restartWeb,
       },
       {
         label: '📋 复制调试信息', hint: '',
@@ -816,6 +832,56 @@ body[data-ds-dark-theme] .dpet-root {
       }, 30000)
     }
 
+    // ----------------------------------------------------- notice channel
+    // 订阅 Host SSE 提醒流；已看过的 id 记在 localStorage，刷新后不重复打扰。
+    const LS_SEEN_KEY = 'dpet.seen-notices'
+    let noticeSource = null
+    let noticeTimer = 0
+
+    function readSeenIds() {
+      try { return new Set(JSON.parse(localStorage.getItem(LS_SEEN_KEY) || '[]')) } catch { return new Set() }
+    }
+
+    function markSeen(id) {
+      try {
+        const seen = readSeenIds()
+        seen.add(id)
+        localStorage.setItem(LS_SEEN_KEY, JSON.stringify([...seen].slice(-50)))
+      } catch { /* storage unavailable — session-only dedupe, fine */ }
+    }
+
+    function showNotice(notice) {
+      if (state.disposed || !settings.enabled) return
+      markSeen(notice.id)
+      state.lastNotice = notice
+      setAction('happy')
+      // 气泡显示提醒标题，8 秒后交还给动作自身的气泡逻辑。
+      if (state.bubble) {
+        state.bubble.textContent = `${notice.icon || '🔔'} ${notice.title}`
+        state.bubble.dataset.show = 'true'
+        clearTimeout(noticeTimer)
+        noticeTimer = setTimeout(() => {
+          if (state.bubble) state.bubble.dataset.show = 'false'
+        }, 8000)
+      }
+      if (notice.body) console.info(`[dsh-desktop-pet] ${notice.title}: ${notice.body}`)
+    }
+
+    function subscribeNotices() {
+      try {
+        noticeSource = new EventSource('/api/dsh-desktop-pet/events')
+        noticeSource.onmessage = ev => {
+          try {
+            const notice = JSON.parse(ev.data)
+            if (notice && notice.id && !readSeenIds().has(notice.id)) showNotice(notice)
+          } catch { /* malformed frame — ignore */ }
+        }
+        noticeSource.onerror = () => { /* EventSource 自带重连，等恢复即可 */ }
+      } catch (error) {
+        console.warn('[dsh-desktop-pet] notice stream unavailable:', error)
+      }
+    }
+
     // ---------------------------------------------------------- walk engine
     let lastTs = 0
     function tick(ts) {
@@ -885,6 +951,7 @@ body[data-ds-dark-theme] .dpet-root {
       state.obsRetryTimer = obsTimer
 
       startQuietCheck()
+      subscribeNotices()
       state.rafId = requestAnimationFrame(tick)
       setAction('idle')
       console.info('[dsh-desktop-pet] pet mounted 🐾')
@@ -894,6 +961,8 @@ body[data-ds-dark-theme] .dpet-root {
       state.disposed = true
       closeMenu()
       clearActionTimer()
+      clearTimeout(noticeTimer)
+      noticeSource?.close()
       if (state.quietCheckTimer) clearInterval(state.quietCheckTimer)
       if (state.obsRetryTimer) clearInterval(state.obsRetryTimer)
       if (state.sessionObserver) state.sessionObserver.disconnect()
@@ -901,12 +970,11 @@ body[data-ds-dark-theme] .dpet-root {
       if (clickTimer) clearTimeout(clickTimer)
       state.root?.remove()
       document.getElementById(STYLE_ID)?.remove()
-      clientCtx = null
       console.info('[dsh-desktop-pet] pet disposed')
     }
 
     // allow manual teardown / HMR reload from the console
-    window.__dshDesktopPet = { dispose, setAction, settings, openMenu }
+    window.__dshDesktopPet = { dispose, setAction, settings, openMenu, get lastNotice() { return state.lastNotice } }
 
     // cordis plugin shape: the browser-side registry applies this exports
     // object via registry.plugin(), which requires a function or an object
@@ -915,7 +983,7 @@ body[data-ds-dark-theme] .dpet-root {
     //   failed to apply loader entry <id> (dsh-desktop-pet):
     //   invalid plugin, expect function or object with an "apply" method
     function apply(ctx) {
-      clientCtx = ctx ?? null   // cordis client root context (quick actions)
+      void ctx
       if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', mount, { once: true })
       } else {
@@ -924,7 +992,6 @@ body[data-ds-dark-theme] .dpet-root {
     }
 
     exports.name = 'desktop-pet'
-    exports.inject = ['workspaces']
     exports.apply = apply
 
     module.exports = exports
