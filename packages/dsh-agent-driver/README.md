@@ -24,6 +24,8 @@ dsh plugin --profile web add link:~/AiProjects/dsh-plugins/packages/dsh-agent-dr
 
 “默认 DeepSeek Harness”会显式创建标准 Harness 会话，而不会复用空的原生会话；原生路由也只记录在自己的 Session 中，不会修改你的全局默认模型。
 
+工作区项目行右侧的“+”默认也会显式创建该工作区的标准 DSH 会话，不会复用空白原生会话。
+
 工作区会话列表通过会话标题展示驱动 Agent：原生会话的自动标题生成后会被固定为 `Claude Code · <主题>`（以 user 来源 pin，后续自动标题不会覆盖）；你手动重命名的标题保持原文，不会被加前缀。冷重启恢复时，未加前缀的存量原生会话标题会自动回填前缀。
 
 如果 profile 因其他插件无法启动，先修复该插件再启用本包。M0 验证中遇到过 `@linxin666/dsh-tool-describe-image` 缺少 `tools` 注入；该故障与本包无关，不能通过放宽 Claude 工具权限绕过。
@@ -38,7 +40,7 @@ dsh plugin --profile web add link:~/AiProjects/dsh-plugins/packages/dsh-agent-dr
 | 自动编辑 | `acceptEdits` | 自动允许工作区文件修改和常见文件操作；Git 提交、推送等仍可能被拒绝。 |
 | 自动 | `auto` | 由 Claude 的安全分类器判断是否执行。 |
 
-新会话默认是“计划”。选择会保存到 `sessions.json`，首轮和每次 `--resume` 都会明确传入 `--permission-mode`；CLI 初始化事件报告的实际生效模式会一并保存。正在运行的 turn 不能切换权限，等其结束后再修改。
+新会话默认是“计划”。选择会保存到 `sessions.json`，首轮和每次 `--resume` 都会明确传入 `--permission-mode`；CLI 初始化事件报告的实际生效模式会一并保存。运行中也可以切换：当前 CLI 回合保持原模式，新的选择从下一轮开始生效。
 
 `manual`、`dontAsk` 和 `bypassPermissions` 不在界面中提供：当前非交互 `claude -p` 无法将 `manual` 的审批请求转换为 DSH 审批卡，`dontAsk` 需要独立的工具白名单，而 `bypassPermissions` 在没有额外 OS 隔离时不安全。
 
@@ -57,7 +59,7 @@ DSH `0.1.0-rc.6` 尚未提供 provider 专属 access-mode 插槽。本包通过�
 
 ## 模型显示
 
-原生会话中官方模型切换器被隐藏（使用当前 agent 的独立模型选择），取而代之在权限控件左侧显示一个只读模型名：
+原生会话中官方模型切换器被隐藏（使用当前 agent 的独立模型选择），取而代之在输入框右下角、发送按钮前显示一个只读模型名：
 
 - Claude Code：来自 stream-json `system/init` 事件的 `model` 字段，首轮后出现。
 - Hermes：来自 ACP `session/new` / `session/load` 响应的 `models.currentModelId`（去掉 `provider:` 前缀）。

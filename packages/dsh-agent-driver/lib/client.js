@@ -171,6 +171,10 @@ window.__ModuleLoader__.load({
     }
 
     const NEW_SESSION_LABELS = ['新会话', 'New Session', '新建会话', 'New session']
+    const WORKSPACE_NEW_SESSION_LABELS = [
+      /^在“(.+)”中新建会话$/,
+      /^New session in (.+)$/,
+    ]
     let ctx = null
     let nativeAgent = null
     let hermesAgent = null
@@ -191,8 +195,27 @@ window.__ModuleLoader__.load({
       return NEW_SESSION_LABELS.includes(label) || NEW_SESSION_LABELS.includes(text)
     }
 
+    function workspaceIdForNewSessionButton(element) {
+      if (!(element instanceof HTMLElement) || element.tagName !== 'BUTTON' || ctx === null) return undefined
+      const label = (element.getAttribute('aria-label') || '').trim()
+      const match = WORKSPACE_NEW_SESSION_LABELS.map((pattern) => label.match(pattern)).find((value) => value !== null)
+      if (match === undefined) return undefined
+      const matches = ctx.get('workspaces').list.getSnapshot().items
+        .filter((workspace) => workspace.title === match[1])
+      // 工作区标题通常唯一；若旧数据中存在重名项，无法仅靠无障碍标签安全
+      // 地还原被点击的项目，保留 DSH 原生处理，避免创建到错误工作区。
+      return matches.length === 1 ? matches[0].workspaceId : undefined
+    }
+
     function onNewSessionClick(event) {
       const button = event.target instanceof Element ? event.target.closest('button') : null
+      const target = workspaceIdForNewSessionButton(button)
+      if (target !== undefined) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        void createHarnessSession(target)
+        return
+      }
       if (!isNewSessionButton(button)) return
       event.preventDefault()
       // React's delegation can attach at document. Window capture runs before
@@ -274,10 +297,9 @@ window.__ModuleLoader__.load({
       return currentWorkspace ?? workspaceState.recentWorkspaceId
     }
 
-    async function createHarnessSession() {
+    async function createHarnessSession(workspaceTarget = workspaceId()) {
       if (creating || ctx === null) return
-      const target = workspaceId()
-      if (target === undefined) {
+      if (workspaceTarget === undefined) {
         ctx.get('sessions').clear()
         closeMenu()
         return
@@ -288,7 +310,7 @@ window.__ModuleLoader__.load({
         // workspaces.startSession() reuses *any* blank session in the same
         // workspace. A native blank session must not be adopted as a standard
         // loop, so explicitly create the normal Session + Agent instead.
-        const sessionId = await ctx.get('sessions').create({ workspaceId: target })
+        const sessionId = await ctx.get('sessions').create({ workspaceId: workspaceTarget })
         ctx.get('sessions').open(sessionId)
         closeMenu()
       } catch (error) {
@@ -464,10 +486,6 @@ window.__ModuleLoader__.load({
         }
       }
       return h('div', { ref: rootRef, className: 'dsh-agent-permission', 'data-mode': state.state.permissionMode },
-        state.state.model === undefined ? null : h('span', {
-          className: 'dsh-agent-model',
-          title: `${state.driver === 'hermes' ? 'Hermes' : 'Claude Code'} 当前实际使用的模型`,
-        }, state.state.model),
         h('button', {
           type: 'button',
           className: 'dsh-agent-permissionTrigger',
@@ -493,6 +511,38 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function NativeModelReadout({ session }) {
+      const sessionId = session?.sessionId
+      const [state, setState] = React.useState(undefined)
+
+      React.useEffect(() => {
+        let active = true
+        setState(undefined)
+        if (typeof sessionId !== 'string') return () => { active = false }
+        void getPermissionState(sessionId).then((next) => {
+          if (active) setState(next)
+        }).catch(() => {
+          if (active) setState(null)
+        })
+        const listener = (id, next) => {
+          if (id === sessionId) setState(next)
+        }
+        permissionListeners.add(listener)
+        return () => {
+          active = false
+          permissionListeners.delete(listener)
+        }
+      }, [sessionId])
+
+      if (state === undefined || state === null || state.state.model === undefined) return null
+      const agentLabel = state.driver === 'hermes' ? 'Hermes' : 'Claude Code'
+      return h('span', {
+        className: 'dsh-agent-model',
+        title: `${agentLabel} 当前实际使用的模型：${state.state.model}`,
+        'aria-label': `${agentLabel} 当前模型：${state.state.model}`,
+      }, state.state.model)
+    }
+
     function syncNativeAccessMode() {
       const ticket = ++nativeSessionProbe
       const root = document.body
@@ -501,8 +551,11 @@ window.__ModuleLoader__.load({
         delete root.dataset.nativeAgentAccess
         return
       }
-      void getPermissionState(sessionId).then(() => {
-        if (ticket === nativeSessionProbe) root.dataset.nativeAgentAccess = 'true'
+      void getPermissionState(sessionId).then((next) => {
+        if (ticket === nativeSessionProbe) {
+          root.dataset.nativeAgentAccess = 'true'
+          for (const listener of permissionListeners) listener(sessionId, next)
+        }
       }).catch(() => {
         if (ticket === nativeSessionProbe) delete root.dataset.nativeAgentAccess
       })
@@ -516,6 +569,11 @@ window.__ModuleLoader__.load({
         id: 'claude-code-permission',
         order: -100,
       }, NativePermissionSelect))
+      clientCtx.slots.inject('conversation.input.right', () => clientCtx.slots.register({
+        name: 'conversation.input.right',
+        id: 'native-agent-model',
+        order: -100,
+      }, NativeModelReadout))
     }
 
     function registerNativeCommands(clientCtx) {
@@ -661,7 +719,7 @@ body[data-native-agent-access="true"] button[aria-label*="Access mode"],
 body[data-native-agent-access="true"] button[aria-label^="选择模型"],
 body[data-native-agent-access="true"] button[aria-label^="Select model"] { display: none !important; }
 .dsh-agent-permission { position: relative; display: inline-flex; align-items: center; min-width: 0; }
-.dsh-agent-model { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-caption, #8a8a8a); font-size: 12px; line-height: 17px; padding: 0 4px 0 10px; }
+.dsh-agent-model { flex: none; min-width: 0; max-width: min(180px, 28vw); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-caption, #8a8a8a); font-size: 12px; line-height: 17px; }
 .dsh-agent-permissionTrigger { min-width: 0; max-width: 240px; height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 6px 0 10px; border: 0; border-radius: 24px; outline: none; background: transparent; color: var(--dsw-alias-label-secondary, #666); font: 500 14px/22px inherit; cursor: pointer; }
 .dsh-agent-permissionTrigger:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,.06)); }
 .dsh-agent-permissionTrigger:focus-visible { box-shadow: 0 0 0 2px var(--dsw-alias-border-l3, rgba(0,0,0,.18)); }

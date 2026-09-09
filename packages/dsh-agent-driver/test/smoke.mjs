@@ -46,8 +46,10 @@ const indexPath = join(scratch, 'sessions.json')
 {
   const clientSource = await readFile(join(here, '..', 'lib', 'client.js'), 'utf8')
   assert.doesNotMatch(clientSource, /api\.sessions\.selectModel/, 'native creation must not mutate the global default model')
-  assert.match(clientSource, /sessions'\)\.create\(\{ workspaceId: target \}\)/, 'default route creates a standard session instead of reusing a native blank one')
+  assert.match(clientSource, /sessions'\)\.create\(\{ workspaceId: workspaceTarget \}\)/, 'default route creates a standard session instead of reusing a native blank one')
   assert.doesNotMatch(clientSource, /workspaces'\)\.startSession\(/, 'default route must not adopt an arbitrary blank session')
+  assert.match(clientSource, /WORKSPACE_NEW_SESSION_LABELS/, 'workspace-row plus button is recognized separately from the sidebar new-session button')
+  assert.match(clientSource, /createHarnessSession\(target\)/, 'workspace-row plus button creates an explicit standard Harness session')
   let descriptor
   const windowShim = {
     __ModuleLoader__: { load: (value) => { descriptor = value } },
@@ -96,7 +98,10 @@ const indexPath = join(scratch, 'sessions.json')
   assert.equal(mounted.descriptors[0].namespace, 'nativeAgent')
   assert.deepEqual(mounted.descriptors.map((descriptor) => descriptor.method), ['createSession', 'getPermission', 'setPermission', 'createSession', 'getPermission', 'setPermission', 'getModels', 'setModel', 'getModels', 'setModel'])
   assert.deepEqual(mounted.descriptors.map((descriptor) => descriptor.namespace), ['nativeAgent', 'nativeAgent', 'nativeAgent', 'hermesAgent', 'hermesAgent', 'hermesAgent', 'nativeAgent', 'nativeAgent', 'hermesAgent', 'hermesAgent'])
-  assert.equal(slotRegistrations[0].entry.name, 'conversation.input.left')
+  assert.deepEqual(slotRegistrations.map(({ entry }) => [entry.name, entry.id]), [
+    ['conversation.input.left', 'claude-code-permission'],
+    ['conversation.input.right', 'native-agent-model'],
+  ])
   assert.equal(slotRegistrations[0].entry.id, 'claude-code-permission')
 }
 
@@ -207,6 +212,15 @@ const changedPermission = await remoteGateway.invoke({
 assert.deepEqual(changedPermission, { permissionMode: 'acceptEdits', model: 'fake-claude' })
 const resumedArgs = agent.commandArgs(false)
 assert.equal(resumedArgs[resumedArgs.indexOf('--permission-mode') + 1], 'acceptEdits', '--resume carries the persisted permission mode too')
+agent.status = 'running'
+const queuedPermission = await remoteGateway.invoke({
+  namespace: 'nativeAgent',
+  method: 'setPermission',
+  args: { sessionId, permissionMode: 'plan' },
+})
+assert.deepEqual(queuedPermission, { permissionMode: 'plan', model: 'fake-claude' }, 'running turns can queue a permission choice for the next CLI process')
+assert.equal(agent.commandArgs(false)[agent.commandArgs(false).indexOf('--permission-mode') + 1], 'plan', 'next CLI process receives a permission choice made during the preceding turn')
+agent.status = 'idle'
 await assert.rejects(
   () => remoteGateway.invoke({ namespace: 'nativeAgent', method: 'setPermission', args: { sessionId, permissionMode: 'bypassPermissions' } }),
   /permissionMode|bypassPermissions/,
