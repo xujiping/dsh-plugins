@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop-pet",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DSH 桌面宠物：Web GUI 右下角一只纯 CSS 像素小宠，状态机驱动 idle/walk/sleep/happy/eat/typing/work 等动作；支持点击、拖拽、双击喂食，并通过 MutationObserver 联动会话状态（AI 输出中 cheering、工具执行中 work、空闲自动睡觉）。纯 client DOM 注入，位置记忆到 localStorage，热插拔不改 DSH 源码。",
   "keywords": [
     "deepseek",

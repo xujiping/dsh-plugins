@@ -65,6 +65,26 @@ Host 半边注册 `GET /api/dsh-desktop-pet/events` 的 SSE 长连接（仅本�
 后续可按同一 `notifier.publish({ id, kind, icon, title, body })` 契约扩展插件更新、
 模型额度等检查器。接口仅接受本机回环连接（同 restart 路由的信任围栏）。
 
+## 悬停余额卡片
+
+鼠标悬停宠物弹出「💰 模型余额」卡片，展示 `~/.dsh/settings.yaml` 中
+`llm-pi-ai.providers` 已配置的各模型提供商及其余额/余量。Host 半边注册
+`GET /api/dsh-desktop-pet/balance`（本机同源围栏，结果内存缓存 55 秒，
+`?force=1` 强刷）：
+
+| 提供商 | 查询方式 | 展示 |
+| --- | --- | --- |
+| DeepSeek 官方 | `GET api.deepseek.com/user/balance` | CNY 余额 |
+| 火山方舟 Agent Plan | `arkcli usage balance --type plan`（子进程） | 5h / 周 / 月剩余百分比 |
+| 智谱开放平台 | 官方余额接口已下线（404） | 标记「平台未提供余额接口」 |
+| MiniMax / 内网网关 | 无公开余额接口 | 标记「无公开余额接口」 |
+
+API Key 优先取 `apiKeyEnv` 对应的进程环境变量，缺失时回退读
+`~/.dsh/.credentials.yaml`（扁平 KEY: value，逐行正则取值）；响应只含展示
+文本，绝不回传凭证。客户端后台每 1 分钟轮询刷新，悬停时直接展示缓存、
+零等待；悬停中若数据刷新则卡片就地更新。yaml 解析从 dsh 依赖树
+解析（插件保持零依赖）。
+
 ## 控制台调试
 
 ```js

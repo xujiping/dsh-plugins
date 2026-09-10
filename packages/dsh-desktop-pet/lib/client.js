@@ -343,6 +343,56 @@ body[data-ds-dark-theme] .dpet-root {
   50% { transform: rotate(-6deg) translateY(2px); }
 }
 
+/* ---- hover balance card: model provider balances ---- */
+.dpet-tip {
+  position: fixed;
+  z-index: 46;
+  box-sizing: border-box;
+  min-width: 230px;
+  max-width: 320px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l2);
+  box-shadow: var(--dsw-shadow-lv3);
+  font: 12px/1.6 -apple-system, "PingFang SC", "Segoe UI", sans-serif;
+  color: var(--dsw-alias-label-primary);
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  pointer-events: auto;
+}
+.dpet-tip[data-show="true"] { opacity: 1; transform: translateY(0); }
+.dpet-tip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary);
+  margin-bottom: 4px;
+}
+.dpet-tip-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 0;
+}
+.dpet-tip-name { font-weight: 600; white-space: nowrap; }
+.dpet-tip-models {
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+}
+.dpet-tip-val { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dpet-tip-val[data-kind="unsupported"] { color: var(--dsw-alias-label-tertiary); }
+.dpet-tip-val[data-kind="error"] { color: var(--dsw-alias-label-warning, #c77f1f); }
+.dpet-tip-val[data-kind="quota"] { color: var(--dsw-alias-label-success, #2f9e63); }
+
 /* ---- right-click config menu ---- */
 .dpet-menu {
   position: fixed;
@@ -415,6 +465,94 @@ body[data-ds-dark-theme] .dpet-root {
 .dpet-menu-item .dpet-act {
   font-size: 11px;
   opacity: 0.5;
+}
+
+/* ---- restart confirmation: compact DSH-style modal ---- */
+.dpet-restart-mask {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: var(--dsw-alias-bg-mask-1);
+}
+.dpet-restart-dialog {
+  box-sizing: border-box;
+  width: min(400px, 100%);
+  padding: 20px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-base);
+  box-shadow: var(--dsw-shadow-lv3);
+  color: var(--dsw-alias-label-primary);
+  font: 13px/1.55 -apple-system, "PingFang SC", "Segoe UI", sans-serif;
+}
+.dpet-restart-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.dpet-restart-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 16px;
+  line-height: 1;
+}
+.dpet-restart-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.dpet-restart-copy {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+}
+.dpet-restart-note {
+  margin-top: 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+.dpet-restart-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+.dpet-restart-button {
+  min-width: 72px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 7px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.dpet-restart-button:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.dpet-restart-button:focus-visible {
+  outline: 2px solid var(--dsw-alias-button-info-fill);
+  outline-offset: 2px;
+}
+.dpet-restart-button[data-kind="primary"] {
+  border-color: transparent;
+  background: var(--dsw-alias-button-info-fill);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+.dpet-restart-button[data-kind="primary"]:hover {
+  background: var(--dsw-alias-button-info-hover);
 }
 `
       document.head.append(style)
@@ -585,6 +723,155 @@ body[data-ds-dark-theme] .dpet-root {
       setAction('eat')
     }
 
+    // -------------------------------------------------- hover balance card
+    // 悬停宠物弹出已配置模型的余额/余量卡片；数据来自 Host /balance 路由。
+    const BALANCE_ENDPOINT = '/api/dsh-desktop-pet/balance'
+    const BALANCE_TTL = 60 * 1000  // 后台轮询间隔：1 分钟
+    let tipEl = null
+    let tipHideTimer = 0
+    let balanceCache = { at: 0, data: null }
+    let balanceFetching = null
+
+    function fetchBalances() {
+      if (balanceFetching) return balanceFetching
+      balanceFetching = fetch(BALANCE_ENDPOINT, { cache: 'no-store' })
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
+        .then(data => {
+          balanceCache = { at: Date.now(), data }
+          if (tipEl && tipEl.dataset.show === 'true') {
+            renderTip(data)   // 悬停中数据刷新则就地更新
+            positionTip()     // 高度可能变化，重新夹紧视口/避让侧栏
+          }
+          return data
+        })
+        .catch(() => { /* 轮询失败：保留上一次数据，下轮再试 */ })
+        .finally(() => { balanceFetching = null })
+      return balanceFetching
+    }
+
+    // 后台定时轮询：每分钟刷一次，悬停时直接展示缓存、零等待。
+    let balancePollTimer = 0
+    function startBalancePolling() {
+      if (balancePollTimer) return
+      fetchBalances()
+      balancePollTimer = setInterval(() => {
+        if (!state.disposed && settings.enabled) fetchBalances()
+      }, BALANCE_TTL)
+    }
+
+    function stopBalancePolling() {
+      if (balancePollTimer) { clearInterval(balancePollTimer); balancePollTimer = 0 }
+    }
+
+    function buildTipRow(p) {
+      const row = document.createElement('div')
+      row.className = 'dpet-tip-row'
+      const nameWrap = document.createElement('span')
+      const name = document.createElement('div')
+      name.className = 'dpet-tip-name'
+      name.textContent = p.displayName || p.id
+      nameWrap.append(name)
+      if (Array.isArray(p.models) && p.models.length) {
+        const models = document.createElement('div')
+        models.className = 'dpet-tip-models'
+        models.textContent = p.models.map(m => m.name || m.id).join(' / ')
+        nameWrap.append(models)
+      }
+      const val = document.createElement('span')
+      val.className = 'dpet-tip-val'
+      val.dataset.kind = p.kind || 'unsupported'
+      val.textContent = p.text || '—'
+      row.append(nameWrap, val)
+      return row
+    }
+
+    function renderTip(data) {
+      if (!tipEl) return
+      tipEl.textContent = ''
+      const head = document.createElement('div')
+      head.className = 'dpet-tip-head'
+      const title = document.createElement('span')
+      title.textContent = '💰 模型余额'
+      const stamp = document.createElement('span')
+      stamp.textContent = new Date(data.at || Date.now()).toLocaleTimeString()
+      head.append(title, stamp)
+      tipEl.append(head)
+      const providers = Array.isArray(data.providers) ? data.providers : []
+      if (!providers.length) {
+        const empty = document.createElement('div')
+        empty.className = 'dpet-tip-models'
+        empty.textContent = 'settings.yaml 中未配置模型提供商'
+        tipEl.append(empty)
+        return
+      }
+      providers.forEach(p => tipEl.append(buildTipRow(p)))
+    }
+
+    // 定位卡片：完整落在视口内（四周留 8px），优先宠物上方、放不下放下方；
+    // 再避开右侧会话导航栏（dsh-chat-scroll-nav 的 .dsn-rail 等固定侧栏）。
+    function positionTip() {
+      if (!tipEl || !state.root) return
+      const tw = tipEl.offsetWidth
+      const th = tipEl.offsetHeight
+      const maxX = Math.max(8, window.innerWidth - tw - 8)
+      let x = Math.min(Math.max(8, state.x + 36 - tw / 2), maxX)
+      let y = state.y - th - 10
+      if (y < 8) y = state.y + 94
+      y = Math.min(y, Math.max(8, window.innerHeight - th - 8))
+      // 侧栏避让：与任何可见的固定侧栏相交时，把卡片整体推到侧栏左侧。
+      document.querySelectorAll('.dsn-rail, [data-scroll-nav-rail]').forEach((el) => {
+        if (!(el instanceof HTMLElement) || el.offsetParent === null) return
+        const r = el.getBoundingClientRect()
+        if (x < r.right && x + tw > r.left && y < r.bottom && y + th > r.top) {
+          const shifted = r.left - tw - 8
+          // 左侧放得下就整体推过去；放不下保持视口内，靠更高 z-index 压在侧栏上层。
+          if (shifted >= 8) x = shifted
+        }
+      })
+      tipEl.style.left = `${Math.round(x)}px`
+      tipEl.style.top = `${Math.round(y)}px`
+    }
+
+    function showTip() {
+      clearTimeout(tipHideTimer)
+      if (!tipEl) {
+        tipEl = document.createElement('div')
+        tipEl.className = 'dpet-tip'
+        tipEl.setAttribute('data-plugin', 'dsh-desktop-pet')
+        tipEl.addEventListener('pointerenter', () => clearTimeout(tipHideTimer))
+        tipEl.addEventListener('pointerleave', hideTip)
+        document.body.append(tipEl)
+      }
+      tipEl.dataset.show = 'false'
+      if (balanceCache.data) {
+        renderTip(balanceCache.data)          // 后台轮询缓存：悬停即出，零等待
+      } else {
+        tipEl.textContent = '💰 模型余额查询中…'
+        fetchBalances().then(data => {
+          if (data && tipEl && tipEl.dataset.show === 'true') {
+            renderTip(data)
+            positionTip()                     // 内容到位后高度可能变化，重新定位
+          }
+        })
+      }
+      // 内容同步渲染后再量尺寸定位，保证边界计算基于真实高度。
+      positionTip()
+      tipEl.dataset.show = 'true'
+    }
+
+    function hideTip() {
+      tipHideTimer = setTimeout(() => {
+        tipEl?.remove()
+        tipEl = null
+      }, 250)
+    }
+
+    function onPetEnter() {
+      if (state.dragging || !settings.enabled) return
+      if (menuEl) return // 右键菜单打开期间不再弹余额卡片
+      showTip()
+    }
+
     // ------------------------------------------------------- config menu
     let menuEl = null
 
@@ -652,6 +939,10 @@ body[data-ds-dark-theme] .dpet-root {
 
     function openMenu() {
       closeMenu()
+      // 右键菜单优先：立即撤下悬停余额卡片，避免遮挡菜单。
+      clearTimeout(tipHideTimer)
+      tipEl?.remove()
+      tipEl = null
       menuEl = document.createElement('div')
       menuEl.className = 'dpet-menu'
       menuEl.setAttribute('data-plugin', 'dsh-desktop-pet')
@@ -713,30 +1004,132 @@ body[data-ds-dark-theme] .dpet-root {
       return row
     }
 
+    const RESTART_DIALOG_ID = 'dsh-desktop-pet-restart-dialog'
+    let closeRestartDialog = () => {}
+
+    function confirmRestart() {
+      closeRestartDialog()
+      return new Promise(resolve => {
+        const mask = document.createElement('div')
+        mask.id = RESTART_DIALOG_ID
+        mask.className = 'dpet-restart-mask'
+
+        const dialog = document.createElement('section')
+        dialog.className = 'dpet-restart-dialog'
+        dialog.setAttribute('role', 'dialog')
+        dialog.setAttribute('aria-modal', 'true')
+        dialog.setAttribute('aria-labelledby', 'dpet-restart-title')
+        dialog.tabIndex = -1
+
+        const heading = document.createElement('div')
+        heading.className = 'dpet-restart-heading'
+        const icon = document.createElement('span')
+        icon.className = 'dpet-restart-icon'
+        icon.setAttribute('aria-hidden', 'true')
+        icon.textContent = '↻'
+        const title = document.createElement('h2')
+        title.id = 'dpet-restart-title'
+        title.className = 'dpet-restart-title'
+        title.textContent = '重启 DSH Web'
+        heading.append(icon, title)
+
+        const copy = document.createElement('p')
+        copy.className = 'dpet-restart-copy'
+        copy.textContent = '服务会短暂不可用，正在运行的任务将被中断。'
+        const note = document.createElement('div')
+        note.className = 'dpet-restart-note'
+        note.textContent = '服务恢复后，此页面会自动刷新。'
+
+        const actions = document.createElement('div')
+        actions.className = 'dpet-restart-actions'
+        const cancel = document.createElement('button')
+        cancel.type = 'button'
+        cancel.className = 'dpet-restart-button'
+        cancel.textContent = '取消'
+        const confirm = document.createElement('button')
+        confirm.type = 'button'
+        confirm.className = 'dpet-restart-button'
+        confirm.dataset.kind = 'primary'
+        confirm.textContent = '确认重启'
+        actions.append(cancel, confirm)
+        dialog.append(heading, copy, note, actions)
+        mask.append(dialog)
+
+        let settled = false
+        const finish = value => {
+          if (settled) return
+          settled = true
+          document.removeEventListener('keydown', onKeydown, true)
+          mask.remove()
+          closeRestartDialog = () => {}
+          resolve(value)
+        }
+        const onKeydown = event => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            finish(false)
+          }
+        }
+        cancel.addEventListener('click', () => finish(false))
+        confirm.addEventListener('click', () => finish(true))
+        mask.addEventListener('mousedown', event => {
+          if (event.target === mask) finish(false)
+        })
+        document.addEventListener('keydown', onKeydown, true)
+        document.body.append(mask)
+        closeRestartDialog = () => finish(false)
+        cancel.focus()
+      })
+    }
+
     let restarting = false
     async function restartWeb() {
       if (restarting) return
-      if (!window.confirm('重启 DSH Web 会中断正在运行的任务。是否继续？')) return
+      if (!await confirmRestart()) return
       restarting = true
       const endpoint = '/api/dsh-desktop-pet/restart'
       try {
-        const response = await fetch(endpoint, {
-          method: 'POST', headers: { 'X-DSH-Pet-Action': 'restart' },
-          signal: AbortSignal.timeout(8000),
-        })
-        const result = await response.json()
-        if (!response.ok) throw new Error(result.error || '重启请求失败')
+        // 第一步：触发重启。请求可能因服务已在重启中被掐断（8s 超时 / 网络错误），
+        // 这不一定失败——照常进入轮询，以 instance 是否变化为最终判据。
+        let beforeInstance = null
+        let triggerError = null
+        try {
+          const response = await fetch(endpoint, {
+            method: 'POST', headers: { 'X-DSH-Pet-Action': 'restart' },
+            signal: AbortSignal.timeout(8000),
+          })
+          const result = await response.json()
+          if (!response.ok) throw new Error(result.error || '重启请求失败')
+          beforeInstance = result.instance
+        } catch (error) {
+          triggerError = error
+        }
         setAction('work')
         const deadline = Date.now() + 60000
+        let reachable = false
+        let sawOutage = false   // 触发失败时，用「出现断连又恢复」佐证重启确实发生
         while (Date.now() < deadline) {
           await new Promise(resolve => setTimeout(resolve, 1000))
           try {
             const status = await fetch(endpoint, { cache: 'no-store', signal: AbortSignal.timeout(2000) })
-            if (status.ok && (await status.json()).instance !== result.instance) {
-              location.reload()
-              return
+            if (status.ok) {
+              reachable = true
+              const { instance } = await status.json()
+              if (instance !== beforeInstance) {
+                location.reload()
+                return
+              }
+            } else {
+              sawOutage = true
             }
-          } catch { /* 重启期间连接暂时不可用，继续等待。 */ }
+          } catch {
+            sawOutage = true  // 重启期间连接暂时不可用，继续等待
+          }
+        }
+        // 60 秒内没等到新实例。触发请求失败、服务始终可达且从未断连，
+        // 才判定为「未触发」；否则按恢复超时提示。
+        if (triggerError && reachable && !sawOutage) {
+          throw new Error(`触发请求失败（${triggerError.message}），请重试`)
         }
         throw new Error('等待服务恢复超时，请检查 ~/.dsh/logs/desktop-pet-restart.log，必要时手动启动 DSH Web')
       } catch (error) {
@@ -937,6 +1330,8 @@ body[data-ds-dark-theme] .dpet-root {
       root.addEventListener('click', onClick)
       root.addEventListener('dblclick', onDblClick)
       root.addEventListener('contextmenu', onContextMenu)
+      root.addEventListener('pointerenter', onPetEnter)
+      root.addEventListener('pointerleave', hideTip)
 
       if (!settings.enabled) state.root.style.display = 'none'
 
@@ -951,6 +1346,7 @@ body[data-ds-dark-theme] .dpet-root {
       state.obsRetryTimer = obsTimer
 
       startQuietCheck()
+      startBalancePolling()
       subscribeNotices()
       state.rafId = requestAnimationFrame(tick)
       setAction('idle')
@@ -960,14 +1356,19 @@ body[data-ds-dark-theme] .dpet-root {
     function dispose() {
       state.disposed = true
       closeMenu()
+      closeRestartDialog()
       clearActionTimer()
       clearTimeout(noticeTimer)
       noticeSource?.close()
       if (state.quietCheckTimer) clearInterval(state.quietCheckTimer)
+      stopBalancePolling()
       if (state.obsRetryTimer) clearInterval(state.obsRetryTimer)
       if (state.sessionObserver) state.sessionObserver.disconnect()
       if (state.rafId) cancelAnimationFrame(state.rafId)
       if (clickTimer) clearTimeout(clickTimer)
+      clearTimeout(tipHideTimer)
+      tipEl?.remove()
+      tipEl = null
       state.root?.remove()
       document.getElementById(STYLE_ID)?.remove()
       console.info('[dsh-desktop-pet] pet disposed')
