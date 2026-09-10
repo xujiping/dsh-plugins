@@ -101,8 +101,11 @@ export function installNativeCommands(ctx, owns) {
   const list = function (agent) {
     return owns(agent) ? agent.listCommands() : originalList.call(this, agent)
   }
-  const execute = async function (agent, line, signal) {
-    if (!owns(agent)) return originalExecute.call(this, agent, line, signal)
+  const execute = async function (agent, line, submittedAttachments, signal) {
+    // DSH 的命令接口在 line 与 signal 之间加入了附件列表。普通 Harness
+    // 会话必须逐项透传，否则官方命令会收到 undefined 的 signal 并在读取
+    // signal.aborted 时崩溃。
+    if (!owns(agent)) return originalExecute.call(this, agent, line, submittedAttachments, signal)
     const name = /^\/([^\s]+)(?:\s|$)/u.exec(line)?.[1]
     if (!name || !(await agent.listCommands()).some((item) => item.name === name)) return undefined
     if (signal.aborted) throw new Error('命令已取消')

@@ -189,17 +189,17 @@ assert.equal(nativeScopeHits, 1, 'native scoped listener observes its own Agent'
 
 agent.followup(createUserMessage({ content: [{ type: 'text', text: 'hello' }], source: { kind: 'user', rpcId: randomUUID() } }))
 await agent.whenIdle()
-const types = agent.session.events.map((event) => event.type)
+const types = agent.session.snapshotEvents().map((event) => event.type)
 for (const type of ['turn/start', 'user/message', 'request/header', 'step/start', 'assistant/chunk', 'assistant/message', 'tool/call', 'tool/result', 'step/end', 'turn/end']) {
   assert.ok(types.includes(type), `event present: ${type}; got ${JSON.stringify(types)}`)
 }
-assert.equal(agent.session.events.find((event) => event.type === 'request/header').data.header.config.provider, CLAUDE_PROVIDER)
-const call = agent.session.events.find((event) => event.type === 'tool/call')
-const result = agent.session.events.find((event) => event.type === 'tool/result')
+assert.equal(agent.session.snapshotEvents().find((event) => event.type === 'request/header').data.header.config.provider, CLAUDE_PROVIDER)
+const call = agent.session.snapshotEvents().find((event) => event.type === 'tool/call')
+const result = agent.session.snapshotEvents().find((event) => event.type === 'tool/result')
 assert.equal(result.sourceEventSeqs[0], call.seq, 'tool result cites its call')
-assert.equal(agent.session.events.at(-1).data.reason.kind, 'completed')
-assert.ok(agent.session.events.some((event) => event.type === 'assistant/chunk' && event.data.chunk.type === 'text-delta'), 'partial text delta retained')
-const assistantMessages = agent.session.events.filter((event) => event.type === 'assistant/message')
+assert.equal(agent.session.snapshotEvents().at(-1).data.reason.kind, 'completed')
+assert.ok(agent.session.snapshotEvents().some((event) => event.type === 'assistant/chunk' && event.data.chunk.type === 'text-delta'), 'partial text delta retained')
+const assistantMessages = agent.session.snapshotEvents().filter((event) => event.type === 'assistant/message')
 assert.equal(assistantMessages.at(-1).data.message.source.model, 'fake-runtime-model')
 assert.deepEqual(assistantMessages.at(-1).data.usage, { inputTokens: 10, outputTokens: 3 })
 assert.deepEqual(await gateway.getPermission(sessionId), { permissionMode: 'acceptEdits', effectivePermissionMode: 'acceptEdits', model: 'fake-claude' }, 'system/init reports the effective Claude permission mode and actual model')
@@ -237,14 +237,14 @@ assert.deepEqual(finalPermission, { permissionMode: 'auto', model: 'fake-claude'
 // with the agent prefix so the workspace session list shows the agent name.
 agent.session.append('session/title', { title: '帮我修一个 bug', messageSeqs: [3], source: { kind: 'fallback' } })
 await new Promise((resolve) => queueMicrotask(resolve))
-const titleEvents = agent.session.events.filter((event) => event.type === 'session/title')
+const titleEvents = agent.session.snapshotEvents().filter((event) => event.type === 'session/title')
 assert.equal(titleEvents.at(-1).data.title, 'Claude Code · 帮我修一个 bug', 'fallback title is prefixed for the session list')
 assert.equal(titleEvents.at(-1).data.source.kind, 'user', 'prefixed title is pinned so later auto titles cannot strip the agent name')
 agent.session.append('session/title', { title: 'user rename', messageSeqs: [], source: { kind: 'user' } })
-const titlesAfterUserRename = agent.session.events.filter((event) => event.type === 'session/title').map((event) => event.data.title)
+const titlesAfterUserRename = agent.session.snapshotEvents().filter((event) => event.type === 'session/title').map((event) => event.data.title)
 agent.session.append('session/title', { title: 'later fallback', messageSeqs: [9], source: { kind: 'fallback' } })
 await new Promise((resolve) => queueMicrotask(resolve))
-const finalTitles = agent.session.events.filter((event) => event.type === 'session/title').map((event) => event.data.title)
+const finalTitles = agent.session.snapshotEvents().filter((event) => event.type === 'session/title').map((event) => event.data.title)
 assert.deepEqual(finalTitles, [...titlesAfterUserRename, 'later fallback'], 'user renames are respected verbatim; later auto titles are not re-prefixed')
 
 const stored = JSON.parse(await readFile(indexPath, 'utf8'))
@@ -280,8 +280,29 @@ assert.equal(restoredArgs[restoredArgs.indexOf('--permission-mode') + 1], 'auto'
 // Restored native sessions also pin prefixed titles for new automatic titles.
 restored.session.append('session/title', { title: 'restored topic', messageSeqs: [1], source: { kind: 'provider' } })
 await new Promise((resolve) => queueMicrotask(resolve))
-const restoredTitles = restored.session.events.filter((event) => event.type === 'session/title').map((event) => event.data.title)
+const restoredTitles = restored.session.snapshotEvents().filter((event) => event.type === 'session/title').map((event) => event.data.title)
 assert.deepEqual(restoredTitles, ['restored topic', 'Claude Code · restored topic'], 'restored agent pins the agent-name prefix')
+
+// DSH 0.1.5 移除了 sessionPersistence.prepare：网关必须回退到
+// open('read') + sessions.prepare({ seed }) 重建会话。
+const restoreCtx2 = new Context()
+restoreCtx2.sessions = new SessionStore(restoreCtx2)
+restoreCtx2.agents = new AgentRegistry(restoreCtx2)
+restoreCtx2.llm = new LlmRuntime(restoreCtx2)
+restoreCtx2.workspaceRegistry = { get: () => undefined }
+restoreCtx2.sessionPersistence = {
+  open: async () => ({
+    header: { version: 3, id: sessionId, createdAt: Date.now(), cwd: scratch, isSeeded: false },
+    inheritedEventCount: 0,
+    read: async () => ({ eventState: 'detached', events: [] }),
+    close: async () => {},
+  }),
+}
+const restoringGateway2 = new ClaudeCodeDriverGateway(restoreCtx2, { indexPath, tools: [] })
+await restoringGateway2.restore()
+const restored2 = restoreCtx2.agents.get(sessionId)
+assert.ok(restored2, 'new-style persistence backend also restores a live custom agent')
+assert.equal(restored2.session.header.cwd, scratch, 'restored session keeps the workspace cwd')
 assert.throws(
   () => new ClaudeCodeDriverGateway(new Context(), { args: ['--permission-mode', 'auto'] }),
   /managed per native session/,
@@ -318,17 +339,17 @@ assert.deepEqual(hermesAgentLive.commandArgs(false, hermesQuery('anything')), [j
 
 hermesAgentLive.followup(hermesQuery('first question'))
 await hermesAgentLive.whenIdle()
-const hermesAssistant = hermesAgentLive.session.events.findLast((event) => event.type === 'assistant/message')?.data
+const hermesAssistant = hermesAgentLive.session.snapshotEvents().findLast((event) => event.type === 'assistant/message')?.data
 assert.ok(hermesAssistant, 'ACP turn produced an assistant message')
 const hermesText = hermesAssistant.message.content.filter((block) => block.type === 'text').map((block) => block.text).join('')
 const hermesThought = hermesAssistant.message.content.filter((block) => block.type === 'reasoning').map((block) => block.text).join('')
 assert.equal(hermesText, 'Hello from fake Hermes ACP. perm:deny', 'streamed reply lands; default permission mode denies')
 assert.equal(hermesThought, 'thinking about it ', 'thought chunks stream into a reasoning block')
 assert.deepEqual(hermesAssistant.usage, { inputTokens: 7, outputTokens: 2 })
-assert.equal(hermesAgentLive.session.events.at(-1).data.reason.kind, 'completed')
-assert.ok(hermesAgentLive.session.events.some((event) => event.type === 'assistant/chunk' && event.data.chunk.type === 'text-delta'), 'partial text deltas stream in real time')
-const hermesToolCall = hermesAgentLive.session.events.find((event) => event.type === 'tool/call')
-const hermesToolResult = hermesAgentLive.session.events.find((event) => event.type === 'tool/result')
+assert.equal(hermesAgentLive.session.snapshotEvents().at(-1).data.reason.kind, 'completed')
+assert.ok(hermesAgentLive.session.snapshotEvents().some((event) => event.type === 'assistant/chunk' && event.data.chunk.type === 'text-delta'), 'partial text deltas stream in real time')
+const hermesToolCall = hermesAgentLive.session.snapshotEvents().find((event) => event.type === 'tool/call')
+const hermesToolResult = hermesAgentLive.session.snapshotEvents().find((event) => event.type === 'tool/result')
 assert.ok(hermesToolCall && hermesToolResult, 'ACP tool_call updates map to tool/call + tool/result')
 assert.equal(hermesToolResult.data.message.content[0].content[0].text, 'tool denied')
 assert.ok(!hermesText.includes('replayed'), 'session/load replay history is dropped, not re-appended')
@@ -343,7 +364,7 @@ assert.deepEqual(await hermesGateway.getPermission(hermesSessionId), { permissio
 // 驱动必须丢弃，且第二轮正文仍是新回复）。
 hermesAgentLive.followup(hermesQuery('second question'))
 await hermesAgentLive.whenIdle()
-const secondAssistant = hermesAgentLive.session.events.filter((event) => event.type === 'assistant/message').at(-1).data
+const secondAssistant = hermesAgentLive.session.snapshotEvents().filter((event) => event.type === 'assistant/message').at(-1).data
 const secondText = secondAssistant.message.content.filter((block) => block.type === 'text').map((block) => block.text).join('')
 assert.equal(secondText, 'Second reply from fake Hermes ACP. perm:deny')
 
@@ -355,7 +376,7 @@ const hermesYolo = await remoteGateway.invoke({
 assert.deepEqual(hermesYolo, { permissionMode: 'yolo', model: 'fake-acp-model' })
 hermesAgentLive.followup(hermesQuery('third question'))
 await hermesAgentLive.whenIdle()
-const yoloText = hermesAgentLive.session.events.filter((event) => event.type === 'assistant/message').at(-1).data.message.content.filter((block) => block.type === 'text').map((block) => block.text).join('')
+const yoloText = hermesAgentLive.session.snapshotEvents().filter((event) => event.type === 'assistant/message').at(-1).data.message.content.filter((block) => block.type === 'text').map((block) => block.text).join('')
 assert.ok(yoloText.endsWith('perm:allow'), 'yolo permission round-trip selects allow_once')
 await assert.rejects(
   () => remoteGateway.invoke({ namespace: 'hermesAgent', method: 'setPermission', args: { sessionId: hermesSessionId, permissionMode: 'acceptEdits' } }),
@@ -364,7 +385,7 @@ await assert.rejects(
 )
 hermesAgentLive.session.append('session/title', { title: '查一下配置', messageSeqs: [2], source: { kind: 'fallback' } })
 await new Promise((resolve) => queueMicrotask(resolve))
-const hermesTitles = hermesAgentLive.session.events.filter((event) => event.type === 'session/title')
+const hermesTitles = hermesAgentLive.session.snapshotEvents().filter((event) => event.type === 'session/title')
 assert.equal(hermesTitles.at(-1).data.title, 'Hermes · 查一下配置', 'Hermes fallback titles are prefixed too')
 assert.equal(HERMES_PROFILE.remoteNamespace, 'hermesAgent')
 assert.equal(CLAUDE_PROFILE.remoteNamespace, 'nativeAgent')

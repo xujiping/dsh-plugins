@@ -25,9 +25,16 @@ ctx.commands = new Commands(ctx)
 ctx.typert = new Registry(ctx)
 ctx.typert.register(TYPERT)
 ctx.typert.register(NATIVE_TYPERT)
+const nativeSessionIdSchema = NATIVE_TYPERT.invocations.find((item) => item.namespace === 'nativeAgent' && item.method === 'getPermission').parameters[0].codec.schema
+assert.equal(nativeSessionIdSchema.parse(`session-${crypto.randomUUID()}`).startsWith('session-'), true, '默认 DSH 会话 ID 可通过原生归属探测边界')
 const remote = new Remote(ctx)
 let harnessCalls = 0
-ctx.commands.register({ name: 'compact', description: 'Harness 压缩', handler: () => { harnessCalls++; return { kind: 'success' } } })
+let harnessInvocation
+ctx.commands.register({ name: 'compact', description: 'Harness 压缩', handler: (invocation) => {
+  harnessCalls++
+  harnessInvocation = invocation
+  return { kind: 'success' }
+} })
 const originalList = ctx.commands.list
 const originalExecute = ctx.commands.execute
 let disposeCommands
@@ -52,7 +59,11 @@ const modelAbort = new AbortController()
 modelAbort.abort()
 await assert.rejects(discoverHermesModels({ ...hermes, config: modelConfig }, modelAbort.signal), /取消/)
 await assert.rejects(discoverHermesModels(hermes), /Python/, '不支持的 launcher 明确报错而非回退不完整目录')
-const invoke = (agent, method, extra = {}) => remote.invoke({ namespace: 'commands', method, args: { agentId: agent.id, ...extra } })
+const invoke = (agent, method, extra = {}) => remote.invoke({
+  namespace: 'commands',
+  method,
+  args: { agentId: agent.id, ...(method === 'execute' ? { submittedAttachments: [] } : {}), ...extra },
+})
 const [claudeCommands, hermesCommands] = await Promise.all(agents.map((agent) => invoke(agent, 'list')))
 assert.equal(claude.turn, 0, '发现命令不启动推理 turn')
 assert.equal(hermes.turn, 0, '发现命令不启动推理 turn')
@@ -69,21 +80,21 @@ assert.deepEqual(normalizeCommands([{ name: 'review', aliases: ['inspect'], desc
 
 await invoke(hermes, 'execute', { line: '/compact exact-model  two-spaces' })
 await hermes.whenIdle()
-const response = hermes.session.events.findLast((event) => event.type === 'assistant/message').data.message.content
+const response = hermes.session.snapshotEvents().findLast((event) => event.type === 'assistant/message').data.message.content
 assert.equal(response[0].text, 'command:/compact exact-model  two-spaces', '斜杠命令不追加格式指令且保留内部空格')
 await invoke(claude, 'execute', { line: '/plugin:review src/index.js' })
 await claude.whenIdle()
-assert.equal(claude.session.events.findLast((event) => event.type === 'user/message').data.content[0].text, '/plugin:review src/index.js')
+assert.equal(claude.session.snapshotEvents().findLast((event) => event.type === 'user/message').data.content[0].text, '/plugin:review src/index.js')
 assert.equal(harnessCalls, 0, '原生命令不进入同名 Harness handler')
 assert.equal(await invoke(hermes, 'execute', { line: '/plugin:review' }), undefined, 'Hermes 不能执行 Claude 专属命令')
-const count = hermes.session.events.length
+const count = hermes.session.snapshotEvents().length
 hermes.status = 'running'
 await assert.rejects(invoke(hermes, 'execute', { line: '/compact' }), /等待/)
 hermes.status = 'idle'
-assert.equal(hermes.session.events.length, count)
+assert.equal(hermes.session.snapshotEvents().length, count)
 const abort = new AbortController()
 abort.abort()
-await assert.rejects(ctx.commands.execute(hermes, '/compact', abort.signal), /取消/)
+await assert.rejects(ctx.commands.execute(hermes, '/compact', [], abort.signal), /取消/)
 await assert.rejects(discoverCommands(hermes, abort.signal), /取消/)
 await assert.rejects(discoverCommands({ ...hermes, config: { command: '/nonexistent-dsh-test' }, commandArgs: () => [] }), /ENOENT/)
 const pendingAbort = new AbortController()
@@ -99,8 +110,11 @@ claude.config = savedConfig
 assert.equal((await claude.listCommands()).length, 3, '失败后可重新发现命令')
 const normal = { session: ctx.sessions.prepare(crypto.randomUUID(), { meta: { cwd } }) }
 assert.deepEqual(ctx.commands.list(normal).map((c) => c.description), ['Harness 压缩'])
-await ctx.commands.execute(normal, '/compact', new AbortController().signal)
+const normalAbort = new AbortController()
+await ctx.commands.execute(normal, '/compact', [], normalAbort.signal)
 assert.equal(harnessCalls, 1, '默认会话保留原命令通道')
+assert.equal(harnessInvocation.signal, normalAbort.signal, '普通会话命令透传取消信号')
+assert.deepEqual(harnessInvocation.attachments, [], '普通会话命令透传空附件列表')
 
 // 执行真实 Client factory：在两个会话交错查目录时仍按入参会话隔离客户端贡献。
 const source = await readFile(join(here, '../lib/client.js'), 'utf8')
@@ -111,12 +125,13 @@ const effects = []
 const disposers = []
 const uiCtx = new Context()
 const sessionScopes = new Map(agents.map((agent) => [agent.id, new Context()]))
+uiCtx.provide('locale', { bind: () => (key) => key })
 uiCtx.provide('sessions', { subagentAddress: () => undefined, scope: (id) => sessionScopes.get(id), scopeOf: (scope) => [...sessionScopes].find(([, value]) => value === scope)?.[0] })
 const commandRemote = {
   $on: () => () => {},
   commands: {
     list: async (id) => ({ ok: true, value: await ctx.commands.list(agents.find((agent) => agent.id === id) ?? normal) }),
-    execute: async (id, line) => ({ ok: true, value: await ctx.commands.execute(agents.find((agent) => agent.id === id), line, new AbortController().signal) }),
+    execute: async (id, line, attachments = []) => ({ ok: true, value: await ctx.commands.execute(agents.find((agent) => agent.id === id), line, attachments, new AbortController().signal) }),
   },
 }
 uiCtx.provide('remote.commands', commandRemote.commands)
@@ -126,11 +141,21 @@ let officialDescriptor
 const officialSource = await readFile('/Users/xujiping/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-ui-commands/lib/client.js', 'utf8')
 new Function('window', officialSource)({ __ModuleLoader__: { load: (value) => { officialDescriptor = value } } })
 const cordis = await importDshModule('@deepseek-ai/cordis')
-const { CommandUiRuntime } = officialDescriptor.factory((name) => name === '@deepseek-ai/cordis' ? cordis : { createSnapshotStore: (initial) => { let value = initial; return { getSnapshot: () => value, set: (next) => { value = next }, subscribe: () => () => {} } } })
+const clientDependencies = {
+  createSnapshotStore: (initial) => {
+    let value = initial
+    return { getSnapshot: () => value, set: (next) => { value = next }, subscribe: () => () => {} }
+  },
+  rankByName: (items, query) => items.filter((item) => item.name.includes(query)),
+}
+const { CommandUiRuntime } = officialDescriptor.factory((name) => {
+  if (name === '@deepseek-ai/cordis') return cordis
+  return clientDependencies
+})
 new CommandUiRuntime(uiCtx)
 const ui = uiCtx.commandUi
 const popup = { kind: 'popupSelect', options: async () => { throw new Error('不应打开 DSH 原生弹窗') } }
-ui.register({ name: 'model', description: 'Harness 模型', available: () => true, ui: popup })
+ui.register({ name: 'model', description: () => 'Harness 模型', available: () => true, ui: popup })
 ui.decorate({ name: 'compact', available: () => true, ui: popup })
 const normalId = crypto.randomUUID()
 await api.apply({
@@ -162,11 +187,11 @@ for (const agent of agents) {
   const session = { sessionId: agent.id }
   assert.equal(ui.dispatch({ session, candidate: { name: 'compact' }, via: 'menu' }).claim.token, '/compact ')
   assert.equal(ui.matchSpace(session, '/compact').claim.token, '/compact ')
-  assert.equal((await ui.matchEnter(session, '/compact details', request.signal)).claim.token, '/compact ')
+  assert.equal((await ui.matchEnter(session, '/compact details', request.signal, { attachments: 0 })).claim.token, '/compact ')
 }
 for (const [index, agent] of agents.entries()) {
   const session = { sessionId: agent.id }
-  assert.equal(await ui.matchEnter(session, '/model', request.signal), 'handled')
+  assert.equal(await ui.matchEnter(session, '/model', request.signal, { attachments: 0 }), 'handled')
   const controller = ui.live.popups.get(agent.id)
   assert.ok(controller, '回车打开官方模型选择面板')
   for (let attempt = 0; controller.state.getSnapshot().status !== 'ready' && attempt < 100; attempt++) await new Promise((resolve) => setTimeout(resolve, 10))
@@ -208,7 +233,7 @@ claude.status = 'idle'
 assert.ok(claude.commandArgs(false).includes('--model'))
 assert.ok(claude.commandArgs(false).includes('sonnet'))
 const hermesSession = { sessionId: hermes.id }
-await ui.matchEnter(hermesSession, '/model', request.signal)
+await ui.matchEnter(hermesSession, '/model', request.signal, { attachments: 0 })
 const grouped = ui.live.popups.get(hermes.id)
 for (let i = 0; grouped.state.getSnapshot().status !== 'ready' && i < 100; i++) await new Promise((resolve) => setTimeout(resolve, 10))
 await grouped.select(2)
@@ -217,14 +242,14 @@ assert.equal(grouped.state.getSnapshot().options[0].label, 'shared-model')
 await grouped.select(0)
 assert.equal(hermes.permission.selectedModel, 'custom:qwen-coding-plan:shared-model', '同名模型保留提供商身份')
 assert.equal(claude.permission.selectedModel, 'sonnet', '跨 provider 选择不影响其他会话')
-await ui.matchEnter(hermesSession, '/model', request.signal)
+await ui.matchEnter(hermesSession, '/model', request.signal, { attachments: 0 })
 for (let i = 0; grouped.state.getSnapshot().status !== 'ready' && i < 100; i++) await new Promise((resolve) => setTimeout(resolve, 10))
 await grouped.select(3)
 assert.equal(grouped.state.getSnapshot().open, false, '取消关闭分组面板')
 assert.equal(hermes.permission.selectedModel, 'custom:qwen-coding-plan:shared-model', '取消不改变模型')
 await invoke(hermes, 'execute', { line: '/compact after-model' })
 await hermes.whenIdle()
-assert.match(hermes.session.events.findLast((event) => event.type === 'assistant/message').data.message.content[0].text, /model:custom:qwen-coding-plan:shared-model/, '下一轮 ACP 收到正确的跨 provider 模型标识')
+assert.match(hermes.session.snapshotEvents().findLast((event) => event.type === 'assistant/message').data.message.content[0].text, /model:custom:qwen-coding-plan:shared-model/, '下一轮 ACP 收到正确的跨 provider 模型标识')
 for (const dispose of disposers) await dispose()
 assert.equal(Object.hasOwn(ui, 'candidates'), false, '卸载恢复官方命令 UI')
 for (const pending of effects) (await pending)?.()

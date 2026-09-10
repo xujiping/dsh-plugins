@@ -25,6 +25,7 @@ import {
   createMcpApprovalBridge,
   createDriverApply,
   normalizeUsage,
+  sessionEvents,
   terminateProcessGroup,
   textBlocks,
 } from './driver-core.js'
@@ -164,7 +165,9 @@ export async function consumeClaudeJsonl(agent, child, turn, step, signal) {
           step,
           message,
           ...(finalUsage === undefined ? {} : { usage: finalUsage }),
-        }, { surfaceOp: 'append', sourceEventSeqs: chunkSeqs })
+        }, { surfaceOp: 'append' })
+        // DSH 0.1.5 起 assistant/message 自动内嵌其来源流，禁止携带
+        // sourceEventSeqs（携带会抛 "embeds its source stream"）。
       }
       for (const call of toolCalls) {
         agent.session.append('tool/call', { turn, step, callId: call.id, name: call.name, arguments: call.arguments })
@@ -222,7 +225,7 @@ export async function consumeClaudeJsonl(agent, child, turn, step, signal) {
       for (const result of event.message.content.filter((item) => item.type === 'tool_result')) {
         const callId = String(result.tool_use_id)
         const message = createToolResultMessage({ callId, content: textBlocks(result.content), isError: result.is_error === true })
-        const source = agent.session.events.findLast((item) => item.type === 'tool/call' && item.data.callId === callId)
+        const source = sessionEvents(agent.session).findLast((item) => item.type === 'tool/call' && item.data.callId === callId)
         agent.session.append('tool/result', { turn, step, message }, { surfaceOp: 'append', sourceEventSeqs: source ? [source.seq] : undefined })
       }
     }

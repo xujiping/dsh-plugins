@@ -212,8 +212,16 @@ function permissionStateOf(profile, entry) {
   return typeof entry?.model === 'string' && entry.model.length > 0 ? { ...base, model: entry.model } : base
 }
 
+// DSH 0.1.5 起 Session 不再暴露 `.events` 属性（改为 snapshotEvents()）；
+// 兼容旧版（.events 数组）与测试桩两种形态。
+export function sessionEvents(session) {
+  if (Array.isArray(session.events)) return session.events
+  if (typeof session.snapshotEvents === 'function') return session.snapshotEvents()
+  return []
+}
+
 function lastTitleEvent(session) {
-  return session.events.findLast((event) => event.type === 'session/title')
+  return sessionEvents(session).findLast((event) => event.type === 'session/title')
 }
 
 /**
@@ -241,7 +249,7 @@ export class CliDriverAgent {
     this.injected = []
     this.current = undefined
     this.status = 'idle'
-    this.turn = session.events.findLast((event) => event.type === 'turn/start')?.data.turn ?? 0
+    this.turn = sessionEvents(session).findLast((event) => event.type === 'turn/start')?.data.turn ?? 0
     this.activity = Promise.resolve()
     this.discoveryController = new AbortController()
     // The normal API only observes these read-only fields; custom ownership
@@ -386,6 +394,7 @@ export class CliDriverAgent {
           : { kind: 'error', error: { message: error instanceof Error ? error.message : String(error), code: this.profile.errorCode } },
       })
       if (!aborted) this.emit('agent/error', { turn, step, error })
+      if (process.env.AGENT_DRIVER_DEBUG) console.error('[agent-driver:turn-error]', error)
     } finally {
       this.approvalBridge = undefined
       await approvalBridge?.close()
@@ -432,7 +441,7 @@ export class CliDriverGateway extends TypertRemoteService {
     // 用户手动命名的标题（source 'user'）是明确意图：既不加前缀，也视为 pin，
     // 之后任何自动标题都不再被改写成带前缀的版本（含本驱动写入的固定标题）。
     if (data.source?.kind === 'user') return
-    if (session.events.some((event) => event.type === 'session/title' && event.data.source?.kind === 'user')) return
+    if (sessionEvents(session).some((event) => event.type === 'session/title' && event.data.source?.kind === 'user')) return
     if (data.title.startsWith(prefix)) return
     session.append('session/title', {
       title: `${prefix}${data.title}`,
@@ -573,13 +582,38 @@ export class CliDriverGateway extends TypertRemoteService {
       throw error
     }
   }
+  /** 兼容加载持久化会话：旧版 sessionPersistence.prepare(sessionId) 直接返回
+   * { session }；DSH 0.1.5 起该 API 移除，需经 open('read') 读事件后用
+   * sessions.prepare({ seed, eventState }) 重建。 */
+  async loadPersistedSession(sessionId) {
+    const persistence = this.ctx.sessionPersistence
+    if (typeof persistence?.prepare === 'function') {
+      return persistence.prepare(sessionId)
+    }
+    const handle = await persistence.open(sessionId, 'read')
+    let session
+    try {
+      const { events, eventState } = await handle.read()
+      const { events: _events, ...meta } = structuredClone(handle.header ?? {})
+      session = this.ctx.sessions.prepare(sessionId, {
+        seed: events,
+        meta,
+        inheritedEventCount: handle.inheritedEventCount,
+        eventState,
+      })
+    } catch (error) {
+      await handle.close().catch(() => undefined)
+      throw error
+    }
+    return { session, [Symbol.dispose]: () => { void handle.close().catch(() => undefined) } }
+  }
   async restore() {
     const entries = await this.index.read()
     for (const entry of entries) {
       if (this.ctx.agents.get(entry.sessionId) !== undefined) continue
       let preparation
       try {
-        preparation = await this.ctx.sessionPersistence.prepare(entry.sessionId)
+        preparation = await this.loadPersistedSession(entry.sessionId)
         const record = this.recordFor(entry)
         this.publish(preparation.session, 'resume', record)
         if (entry.driverVersion !== this.profile.driverVersion || entry.permissionMode !== record.permissionMode || entry.effectivePermissionMode !== record.effectivePermissionMode) {

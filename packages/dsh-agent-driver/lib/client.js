@@ -11,6 +11,7 @@ window.__ModuleLoader__.load({
     // not expose zod as a shared browser module, while Typert only requires a
     // synchronous parse() boundary for a strict codec.
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    const dshSessionId = /^(?:session-)?[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
     const workspaceIdSchema = {
       parse(value) {
         if (typeof value !== 'string' || value.length === 0) throw new TypeError('agent-driver: invalid workspaceId')
@@ -28,7 +29,7 @@ window.__ModuleLoader__.load({
     const permissionModes = ['plan', 'acceptEdits', 'auto', 'default', 'yolo']
     const sessionIdSchema = {
       parse(value) {
-        if (typeof value !== 'string' || !uuid.test(value)) throw new TypeError('agent-driver: invalid sessionId')
+        if (typeof value !== 'string' || !dshSessionId.test(value)) throw new TypeError('agent-driver: invalid sessionId')
         return value
       },
     }
@@ -657,7 +658,7 @@ window.__ModuleLoader__.load({
               await selectNativeModel(session.sessionId, args.trim())
               return { kind: 'success' }
             }
-            this.openPopup('model', modelPicker, session, { via: 'enter', token: '/model' })
+            this.invoke('model', modelPicker, session, { via: 'enter', token: '/model' })
             return { kind: 'success' }
           } }
         }

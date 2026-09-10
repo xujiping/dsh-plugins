@@ -14,7 +14,7 @@ import { discoverHermesModels } from './hermes-models.js'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { importDshModule } from './dsh-runtime.js'
-import { CliDriverAgent, CliDriverGateway, CliDriverIndex, terminateProcessGroup, textBlocks } from './driver-core.js'
+import { CliDriverAgent, CliDriverGateway, CliDriverIndex, sessionEvents, terminateProcessGroup, textBlocks } from './driver-core.js'
 
 const { createAssistantMessage, createToolResultMessage } = await importDshModule('@deepseek-ai/dsh-llm')
 
@@ -144,7 +144,7 @@ export async function consumeHermesAcp(agent, child, turn, step, signal, message
     if (update.status === 'completed' || update.status === 'failed') {
       const text = toolCallText(update)
       const resultMessage = createToolResultMessage({ callId: id, content: textBlocks(text), isError: update.status === 'failed' })
-      const source = agent.session.events.findLast((event) => event.type === 'tool/call' && event.data.callId === id)
+      const source = sessionEvents(agent.session).findLast((event) => event.type === 'tool/call' && event.data.callId === id)
       agent.session.append('tool/result', { turn, step, message: resultMessage }, { surfaceOp: 'append', sourceEventSeqs: source ? [source.seq] : undefined })
     }
   }
@@ -255,7 +255,7 @@ export async function consumeHermesAcp(agent, child, turn, step, signal, message
       ...(usage !== undefined && Number.isFinite(usage.inputTokens) && Number.isFinite(usage.outputTokens)
         ? { usage: { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens } }
         : {}),
-    }, { surfaceOp: 'append', sourceEventSeqs: chunkSeqs })
+    }, { surfaceOp: 'append' })
   }
 
   // turn 已完成；终止 ACP 服务器进程（profile 声明 tolerateUncleanExit）。

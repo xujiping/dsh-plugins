@@ -6,7 +6,8 @@ import { importDshModule } from './dsh-runtime.js'
 // not expose zod, but the Host can obtain DSH's shared runtime dependency.
 const { z } = await importDshModule('zod')
 const workspaceIdSchema = z.string().min(1)
-const sessionIdSchema = z.string().uuid()
+// DSH 默认会话是 `session-<uuid>`，而本插件创建的原生会话是裸 UUID。
+const sessionIdSchema = z.string().regex(/^(?:session-)?[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
 // 两个 driver（Claude Code / Hermes）的权限档位并集；会话级校验由各网关完成。
 const permissionModeSchema = z.enum(['plan', 'acceptEdits', 'auto', 'default', 'yolo'])
 const createSessionResultSchema = z.object({ sessionId: z.string().uuid() })

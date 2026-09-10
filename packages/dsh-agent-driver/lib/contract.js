@@ -16,6 +16,7 @@ export const workspaceIdSchema = Object.freeze({
 })
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const dshSessionId = /^(?:session-)?[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 export const CLAUDE_PERMISSION_MODES = Object.freeze(['plan', 'acceptEdits', 'auto'])
 export const HERMES_PERMISSION_MODES = Object.freeze(['default', 'yolo'])
 // 线上权限枚举是两个 driver 档位的并集；具体会话支持哪些由各网关校验。
@@ -23,7 +24,9 @@ export const PERMISSION_MODES = Object.freeze([...CLAUDE_PERMISSION_MODES, ...HE
 
 export const sessionIdSchema = Object.freeze({
   parse(value) {
-    if (typeof value !== 'string' || !uuid.test(value)) throw invalid('sessionId')
+    // DSH 默认会话使用 `session-<uuid>`，原生 CLI 会话则直接使用 UUID。
+    // 两者都会经过原生命令归属探测，因此契约必须同时接受。
+    if (typeof value !== 'string' || !dshSessionId.test(value)) throw invalid('sessionId')
     return value
   },
 })
