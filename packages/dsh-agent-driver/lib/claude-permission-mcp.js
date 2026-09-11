@@ -17,9 +17,12 @@ const pending = new Map()
 let bridgeReady
 let settleBridge
 let failBridge
+// socket 故障绝不能让本进程崩溃：未处理的 rejection 会在 claude 的 MCP
+// 握手窗口内杀死本服务，claude 侧随即报 "Available MCP tools: none"。
+// 这里保持进程存活，由 requestDecision 把失败降级为 fail-closed 的 deny。
 bridgeReady = new Promise((resolve, reject) => {
   settleBridge = resolve
-  failBridge = reject
+  failBridge = (error) => { reject(error); bridgeReady.catch(() => {}) }
 })
 let buffer = ''
 

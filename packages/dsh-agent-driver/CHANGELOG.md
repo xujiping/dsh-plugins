@@ -2,6 +2,12 @@
 
 ## 未发布
 
+- 修复：`--safe-mode` 会使 Claude CLI（2.1.237 实测）完全不加载 MCP 服务，与 `--permission-prompt-tool` 指向的审批 MCP 桥互斥，导致工具调用报 "MCP tool mcp__dsh_approval__request_permission not found. Available MCP tools: none"。现在走审批桥的回合自动省略 `--safe-mode`。
+
+- 修复：审批 MCP 桥（`claude-permission-mcp.js`）在回环连接失败/关闭时因未处理的 promise rejection 直接崩溃，导致 Claude 侧报 "MCP tool mcp__dsh_approval__request_permission not found. Available MCP tools: none"。现在任何 socket 故障都保持进程存活并正常应答 `initialize`/`tools/list`，审批不可用时降级为 fail-closed 的 deny。
+
+- 修复：网关创建原生会话时调用 `ctx.agents.enter(agent, this.ctx.agent)`，但插件 `inject` 未声明 `"agent"`，cordis 抛 `cannot get property "agent" without inject`，原生会话启动失败。改为传入 `undefined`（顶层运行时根），并补一句注释说明为何不能读 `this.ctx.agent`。
+
 - 修复：Claude Code 的 `acceptEdits` 模式下，未被自动放行的 Bash 等工具请求不再直接失败。每轮 CLI 通过受随机令牌保护的本机 MCP 回环桥接，将 `--permission-prompt-tool` 回调转为 DSH 原生“允许／拒绝”审批面板；允许一次后同一 Claude 回合继续执行。
 
 - 修复：Claude Code 与 Hermes 原生会话在运行中切换权限不再报错。新选择会持久化并在下一轮 CLI 启动时生效，当前已启动的回合保持原权限模式。

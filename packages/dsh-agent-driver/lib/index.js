@@ -276,7 +276,9 @@ export const CLAUDE_PROFILE = Object.freeze({
       // 因此每轮都从 driver sidecar 显式传入当前会话选择。
       '--permission-mode', agent.permission.permissionMode,
       ...(agent.permission.selectedModel ? ['--model', agent.permission.selectedModel] : []),
-      ...(agent.config.safeMode ? ['--safe-mode'] : []),
+      // --safe-mode 会让 Claude CLI 完全不加载 MCP 服务（2.1.237 实测），
+      // 与依赖 MCP 桥的 --permission-prompt-tool 互斥；走审批桥的回合必须省略。
+      ...(agent.config.safeMode && approvalBridge === undefined ? ['--safe-mode'] : []),
       // Claude's --tools limits only built-ins. The strict MCP config blocks
       // user-level MCP servers; the sole exception is our per-turn local
       // permission bridge, which relays prompts to DSH's ApprovalPanel.

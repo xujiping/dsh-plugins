@@ -643,7 +643,10 @@ export class CliDriverGateway extends TypertRemoteService {
     }
     try {
       detachSession = agent.ctx.sessions.enter(session)
-      detachAgent = this.ctx.agents.enter(agent, this.ctx.agent)
+      // 网关创建的原生会话没有父 agent：owner 传 undefined（顶层运行时根）。
+      // 不能读 this.ctx.agent —— 插件 inject 未声明 "agent"，cordis 会抛
+      // `cannot get property "agent" without inject`，导致会话创建失败。
+      detachAgent = this.ctx.agents.enter(agent, undefined)
       agent.ctx.sessions.announce(session)
       this.ctx.agents.announce(agent)
       // Backfill sessions restored from older builds: their stored title (if
