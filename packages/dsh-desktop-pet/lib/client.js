@@ -46,6 +46,7 @@ window.__ModuleLoader__.load({
     const SPEED_PRESETS = { slow: 24, medium: 42, fast: 70 }       // px/s
     const DEFAULT_SETTINGS = {
       enabled: true,        // show the pet at all
+      dock: true,           // perch above the composer, right-aligned (workbuddy style)
       range: 'medium',      // wander radius preset around the home anchor
       speed: 'medium',      // walk speed preset
       sessionLink: true,    // react to AI streaming / tool calls / quiet
@@ -60,6 +61,7 @@ window.__ModuleLoader__.load({
         const saved = JSON.parse(raw)
         if (typeof saved !== 'object' || saved === null) return
         if (typeof saved.enabled === 'boolean') settings.enabled = saved.enabled
+        if (typeof saved.dock === 'boolean') settings.dock = saved.dock
         if (RANGE_PRESETS[saved.range]) settings.range = saved.range
         if (SPEED_PRESETS[saved.speed]) settings.speed = saved.speed
         if (typeof saved.sessionLink === 'boolean') settings.sessionLink = saved.sessionLink
@@ -114,6 +116,45 @@ window.__ModuleLoader__.load({
       return { x, y }
     }
 
+    // ------------------------------------------------------------- dock mode
+    // 停靠模式：像 workbuddy 一样固定趴在输入框（composer）上方靠右。
+    // 每帧轻量同步：composer 会随侧栏开合 / 窗口缩放移动，位置以它为准。
+    const DOCK_MARGIN_X = 10   // 距输入框右缘
+    const DOCK_MARGIN_Y = 6    // 趴在输入框正上方
+
+    /** 当前可见的输入框宿主：优先官方 seat 钩子，缺失时退回会话滚动容器里的可见 textarea。 */
+    function composerHost() {
+      const seat = document.querySelector('[data-composer-seat]')
+      if (seat instanceof HTMLElement && seat.offsetParent !== null) return seat
+      const scroller = document.querySelector('[data-conversation-scroll]')
+      if (!(scroller instanceof HTMLElement)) return null
+      const boxes = [...scroller.querySelectorAll('textarea')]
+        .filter(el => el instanceof HTMLElement && el.offsetParent !== null)
+      return boxes.at(-1) ?? null
+    }
+
+    function dockToComposer() {
+      const host = composerHost()
+      if (!host) return null
+      const r = host.getBoundingClientRect()
+      const x = Math.max(8, r.right - 72 - DOCK_MARGIN_X)
+      const y = r.top - 84 - DOCK_MARGIN_Y
+      if (y < 0) return null // composer 顶到视口顶端：放不下，退回默认
+      return { x, y }
+    }
+
+    function syncDock() {
+      // 拖拽中让位给鼠标：否则每帧停靠会把宠物拽回输入框，拖不动。
+      if (!settings.dock || !state.root || state.dragging) return
+      const pos = dockToComposer()
+      if (!pos) return
+      if (Math.abs(pos.x - state.x) < 1 && Math.abs(pos.y - state.y) < 1) return
+      state.x = pos.x
+      state.y = pos.y
+      state.home = { x: pos.x, y: pos.y }
+      renderPosition()
+    }
+
     // ---------------------------------------------------------------- state
     const state = {
       action: null,
@@ -124,6 +165,8 @@ window.__ModuleLoader__.load({
       walkTarget: null,      // {x, y} current stroll destination, null = none
       dir: 1,                // 1 = facing right, -1 = left
       dragging: false,
+      dragMoved: false,      // 本次按下是否真的拖动了（>4px）；区分「点一下」与「拖走」
+      dragOriginX: 0, dragOriginY: 0,   // pointerdown 的屏幕坐标
       sessionBusyUntil: 0,   // last time we saw streaming / tool activity
       quietCheckTimer: 0,
       rafId: 0,
@@ -467,6 +510,32 @@ body[data-ds-dark-theme] .dpet-root {
   opacity: 0.5;
 }
 
+/* ---- 召回按钮：宠物隐藏后常驻右下角的小爪印 ---- */
+.dpet-recall {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 44;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 50%;
+  background: var(--dsw-alias-bg-base);
+  box-shadow: var(--dsw-shadow-lv3);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.dpet-recall:hover { opacity: 1; transform: scale(1.08); }
+.dpet-recall:focus-visible {
+  outline: 2px solid var(--dsw-alias-button-info-fill);
+  outline-offset: 2px;
+}
+
 /* ---- restart confirmation: compact DSH-style modal ---- */
 .dpet-restart-mask {
   position: fixed;
@@ -655,6 +724,10 @@ body[data-ds-dark-theme] .dpet-root {
       else if (roll < 0.85) next = 'walk'
       else next = (hour >= 23 || hour < 7) ? 'sleep' : 'sleep'
       // choose a stroll destination within WALK_RANGE of the home anchor
+      if (next === 'walk' && settings.dock) {
+        // docked: stay perched on the composer — animations only, no strolling
+        next = 'idle'
+      }
       if (next === 'walk') {
         const maxX = Math.max(0, window.innerWidth - 72)
         const maxY = Math.max(0, window.innerHeight - 84)
@@ -676,6 +749,9 @@ body[data-ds-dark-theme] .dpet-root {
     function onPointerDown(ev) {
       if (ev.button !== 0) return
       state.dragging = true
+      state.dragMoved = false
+      state.dragOriginX = ev.clientX
+      state.dragOriginY = ev.clientY
       state.root.dataset.dragging = 'true'
       state.dragOffsetX = ev.clientX - state.x
       state.dragOffsetY = ev.clientY - state.y
@@ -687,6 +763,10 @@ body[data-ds-dark-theme] .dpet-root {
 
     function onPointerMove(ev) {
       if (!state.dragging) return
+      if (!state.dragMoved
+        && Math.abs(ev.clientX - state.dragOriginX) + Math.abs(ev.clientY - state.dragOriginY) > 4) {
+        state.dragMoved = true   // 超过 4px 才算拖走，而不是点一下
+      }
       state.x = ev.clientX - state.dragOffsetX
       state.y = ev.clientY - state.dragOffsetY
       clampToViewport()
@@ -697,6 +777,19 @@ body[data-ds-dark-theme] .dpet-root {
       if (!state.dragging) return
       state.dragging = false
       state.root.dataset.dragging = 'false'
+      const moved = state.dragMoved
+      state.dragMoved = false
+      // 拖动 = 手动放置：解除停靠，恢复自由漫游（可在菜单里重新开启）。
+      // 原地点击（没拖动）保持停靠，否则点一下就把宠物从输入框上踢下来了。
+      if (settings.dock) {
+        if (!moved) {
+          syncDock()
+          setAction('happy')
+          return
+        }
+        settings.dock = false
+        persistSettings()
+      }
       // never park on top of the composer; re-anchor wandering here
       const safe = avoidBlocked(state.x, state.y)
       state.x = safe.x; state.y = safe.y
@@ -918,22 +1011,54 @@ body[data-ds-dark-theme] .dpet-root {
         settings[key] = !settings[key]
         persistSettings()
         onChange?.()
-        closeMenu(); openMenu()
+        // 隐藏宠物时直接收起菜单（菜单本身挂在宠物旁边，宠物没了菜单就成了孤儿）；
+        // 其余开关保持原地重开，方便连续调整。
+        if (key === 'enabled' && !settings.enabled) closeMenu()
+        else { closeMenu(); openMenu() }
       })
       return row
+    }
+
+    // 宠物隐藏后的召回入口：常驻右下角小爪印，点击唤回宠物。
+    const RECALL_ID = 'dsh-desktop-pet-recall'
+    let recallEl = null
+
+    function removeRecall() {
+      recallEl?.remove()
+      recallEl = null
+    }
+
+    function showRecall() {
+      if (recallEl) return
+      recallEl = document.createElement('button')
+      recallEl.type = 'button'
+      recallEl.id = RECALL_ID
+      recallEl.className = 'dpet-recall'
+      recallEl.setAttribute('data-plugin', 'dsh-desktop-pet')
+      recallEl.title = '显示桌面宠物'
+      recallEl.setAttribute('aria-label', '显示桌面宠物')
+      recallEl.textContent = '🐾'
+      recallEl.addEventListener('click', () => {
+        settings.enabled = true
+        persistSettings()
+        applyEnabled()
+      })
+      document.body.append(recallEl)
     }
 
     function applyEnabled() {
       if (!state.root) return
       if (settings.enabled) {
+        removeRecall()
         state.root.style.display = ''
         clampToViewport()
         renderPosition()
         state.home = { x: state.x, y: state.y }
-        setAction('idle')
+        setAction('happy')
       } else {
         state.root.style.display = 'none'
         clearActionTimer()
+        showRecall()
       }
     }
 
@@ -952,6 +1077,9 @@ body[data-ds-dark-theme] .dpet-root {
       menuEl.append(
         head,
         checkRow('显示宠物', 'enabled', applyEnabled),
+        checkRow('停靠输入框上', 'dock', () => {
+          if (settings.dock) { syncDock(); setAction('happy') }
+        }),
         segRow('活动范围', 'range', RANGE_PRESETS, { small: '小', medium: '中', large: '大' }),
         segRow('行走速度', 'speed', SPEED_PRESETS, { slow: '慢', medium: '中', fast: '快' }),
         checkRow('会话联动', 'sessionLink'),
@@ -1281,6 +1409,7 @@ body[data-ds-dark-theme] .dpet-root {
       if (state.disposed) return
       const dt = lastTs ? (ts - lastTs) / 1000 : 0
       lastTs = ts
+      syncDock()
       if (state.action === 'walk' && !state.dragging) {
         const t = state.walkTarget
         if (t) {
@@ -1320,6 +1449,7 @@ body[data-ds-dark-theme] .dpet-root {
         state.y = safe.y
       }
       clampToViewport()
+      if (settings.dock) syncDock()   // docked pets ignore persisted coords on boot
       state.home = { x: state.x, y: state.y }
       renderPosition()
 
@@ -1333,7 +1463,10 @@ body[data-ds-dark-theme] .dpet-root {
       root.addEventListener('pointerenter', onPetEnter)
       root.addEventListener('pointerleave', hideTip)
 
-      if (!settings.enabled) state.root.style.display = 'none'
+      if (!settings.enabled) {
+        state.root.style.display = 'none'
+        showRecall()
+      }
 
       // session observer needs the chat flow; retry until the shell mounts it
       const obsTimer = setInterval(() => {
@@ -1370,6 +1503,7 @@ body[data-ds-dark-theme] .dpet-root {
       tipEl?.remove()
       tipEl = null
       state.root?.remove()
+      removeRecall()
       document.getElementById(STYLE_ID)?.remove()
       console.info('[dsh-desktop-pet] pet disposed')
     }

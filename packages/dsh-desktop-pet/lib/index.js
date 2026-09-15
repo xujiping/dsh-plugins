@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process'
-import { createHmac } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { isIPv4 } from 'node:net'
@@ -42,7 +41,7 @@ export function restartSupported(argv = process.argv) {
 // 各平台查询通道（2026-09 实测）：
 //   api.deepseek.com        GET /user/balance（Bearer key）→ CNY 余额
 //   ark.../api/plan         `arkcli usage balance --type plan` → 5h/周/月额度百分比
-//   open.bigmodel.cn        官方余额接口已 404，标记为不支持
+//   open.bigmodel.cn        GET /api/monitor/usage/quota/limit（Bearer key）→ 剩余百分比
 //   其他（minimax / 内网网关）无公开余额接口，标记为不支持
 
 const DSH_DIR = join(homedir(), '.dsh')
@@ -81,30 +80,19 @@ export function readProviderConfigs(settingsPath = join(DSH_DIR, 'settings.yaml'
   return out
 }
 
-// ~/.dsh/.credentials.yaml 是扁平 KEY: value；只按行取目标 key 的值。
+// ~/.dsh/.credentials.yaml 的密钥在 `refs:` 分节下（行首有缩进），纯行首正则
+// 匹配不到；这里允许前导空白，行内容仍是 `KEY: value`。
 export function readCredential(envName, credentialsPath = join(DSH_DIR, '.credentials.yaml')) {
   if (envName && process.env[envName]) return process.env[envName]
   if (!envName) return ''
   try {
-    const re = new RegExp(`^${envName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:\\s*["']?([^"'\\n#]+)`)
+    const re = new RegExp(`^[ \\t]*${envName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:[ \\t]*["']?([^"'\\n#]+)`)
     for (const line of readFileSync(credentialsPath, 'utf8').split('\n')) {
       const m = line.match(re)
       if (m) return m[1].trim()
     }
   } catch { /* 凭证文件不存在或不可读 */ }
   return ''
-}
-
-// 智谱 API Key 形如 id.secret，其管理接口要求 HS256 签名 JWT。
-function zhipuToken(key) {
-  const [id, secret] = key.split('.')
-  if (!id || !secret) return null
-  const enc = obj => Buffer.from(JSON.stringify(obj)).toString('base64url')
-  const now = Date.now()
-  const header = enc({ alg: 'HS256', sign_type: 'SIGN' })
-  const payload = enc({ api_key: id, exp: now + 30 * 60 * 1000, timestamp: now })
-  const sign = createHmac('sha256', secret).update(`${header}.${payload}`).digest('base64url')
-  return `${header}.${payload}.${sign}`
 }
 
 async function fetchJson(url, init, timeoutMs = 8000) {
@@ -164,16 +152,29 @@ async function queryProviderBalance(p) {
   }
 
   if (host === 'open.bigmodel.cn' && key) {
-    const token = zhipuToken(key)
-    if (token) {
-      const { ok, data } = await fetchJson('https://open.bigmodel.cn/api/paas/v4/users/balance',
-        { headers: { authorization: token } })
-      if (ok) {
-        const total = data?.balance?.totalBalance ?? data?.data?.totalBalance
-        if (total !== undefined) return { kind: 'balance', text: `${total} CNY` }
+    // 智谱 GLM Coding Plan 配额接口（2026-09 实测可用，Bearer API Key）：
+    // GET /api/monitor/usage/quota/limit → limits[]（TIME_LIMIT 次数窗 / TOKENS_LIMIT token 窗）。
+    const { ok, data } = await fetchJson('https://open.bigmodel.cn/api/monitor/usage/quota/limit',
+      { headers: { authorization: `Bearer ${key}` } })
+    if (ok && Array.isArray(data?.data?.limits)) {
+      // 窗口语义（参考 pi-zhipu-usage）：TOKENS_LIMIT unit=3 → 5h 滚动窗，unit=6 → 周窗；TIME_LIMIT → MCP 工具请求窗。
+      const wins = []
+      for (const l of data.data.limits) {
+        if (!Number.isFinite(l.percentage)) continue
+        const left = Math.max(0, 100 - l.percentage)
+        let label
+        if (l.type === 'TIME_LIMIT') label = '工具'
+        else if (l.unit === 3) label = '5h'
+        else if (l.unit === 6) label = '周'
+        else label = '窗口'
+        wins.push({ label, left, order: l.type === 'TIME_LIMIT' ? 2 : (l.unit === 3 ? 0 : 1) })
       }
+      wins.sort((a, b) => a.order - b.order)
+      const parts = wins.map(w => `${w.label}剩${w.left}%`)
+      if (parts.length) return { kind: 'quota', text: parts.join(' · ') }
+      return { kind: 'quota', text: '无窗口配额' }
     }
-    return { kind: 'unsupported', text: '平台未提供余额接口' }
+    return { kind: 'error', text: '查询失败' }
   }
 
   return { kind: 'unsupported', text: '无公开余额接口' }

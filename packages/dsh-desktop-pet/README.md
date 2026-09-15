@@ -28,6 +28,25 @@ DSH Web GUI 桌面宠物：一只纯 CSS 小蓝宠住在页面里，会自己溜
 宠物节点挂在 `document.body` 下（React 树之外，`position: fixed`），热插拔卸载
 自动移除节点与样式；位置记忆到 `localStorage`。
 
+## 停靠输入框上（workbuddy 风格）
+
+默认开启：宠物趴在输入框（composer，`[data-composer-seat]`）右上方 10px / 6px 处，
+并**每帧跟随输入框**——侧栏开合、窗口缩放、面板切换导致的位移都会同步跟上
+（`requestAnimationFrame` 中读一次 `getBoundingClientRect`，位置未变则不写样式）。
+输入框顶到视口上沿放不下时保持原位不跳动；会话界面未挂载（如设置页）时不抢位置。
+
+- 关闭/开启：右键宠物 → 「停靠输入框上」；开关存 `localStorage`。
+- 拖动宠物（位移 >4px）= 手动放置，会**自动解除停靠**（拖拽期间停靠同步让位给鼠标，
+  松手不再弹回）；想重新趴回输入框，在右键菜单里把开关再打开。
+- 原地点击（没有拖动）**不会**解除停靠，照常触发 `happy`。
+- 停靠时不漫游（只在原地做 `idle`/`typing`/`work` 等动作），也不记忆坐标。
+
+停靠链路的回归测试（零依赖，自带 DOM stub）：
+
+```bash
+node test/dock.mjs
+```
+
 ## 安装
 
 ```bash
