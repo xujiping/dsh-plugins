@@ -1,0 +1,56 @@
+{
+  "name": "dsh-session-archive",
+  "version": "0.1.0",
+  "description": "DSH 一键归档空闲会话：侧边栏每个 workspace 目录行悬停出现「归档空闲会话」按钮，一键归档该项目下超过 N 天未活动的所有会话（默认 3 天，可配置）。纯 client DOM 注入 + 原生 workspace/archiveSession RPC，不改 DSH 源码，归档可恢复。",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "session",
+    "archive",
+    "idle",
+    "cleanup",
+    "workspace"
+  ],
+  "author": "xujiping",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xujiping/dsh-plugins.git",
+    "directory": "packages/dsh-session-archive"
+  },
+  "homepage": "https://github.com/xujiping/dsh-plugins/tree/main/packages/dsh-session-archive",
+  "bugs": {
+    "url": "https://github.com/xujiping/dsh-plugins/issues"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "node test/smoke.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "workspaces",
+        "sessions"
+      ],
+      "platform": "web"
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "license": "MIT"
+}
