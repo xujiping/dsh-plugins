@@ -147,15 +147,19 @@ function exitOf(child) {
 }
 
 /**
- * 哨兵 LLM adapter：原生会话不经过 LlmRuntime.stream()，仅向模型列表暴露
- * 一个由本机配置决定的占位模型。
+ * 哨兵 LLM adapter：原生会话不经过 LlmRuntime.stream()，仅在 LLM 注册表
+ * 中占位（resolveModel 供会话恢复解析）；listModels 返回空，不进入官方模型目录。
  */
 export class SentinelAdapter {
   constructor(profile) { this.profile = profile }
   providerInfo(provider) { return { id: provider, name: this.profile.providerName } }
   providerRetryPolicy() { return undefined }
   async listModels(provider) {
-    return [{ provider, id: this.profile.defaultModel, name: this.profile.modelName, inputModalities: ['text'] }]
+    // 返回空列表：官方模型目录（buildModelCatalog）会过滤空分组，
+    // 避免原生驱动的占位模型混入普通会话的模型选择器（选中后
+    // LlmRuntime.stream() 会抛错）。原生会话自身的模型选择走
+    // discoverModels() 实时探测 CLI 配置，不经过本适配器。
+    return []
   }
   async resolveModel(provider, model) { return { provider, id: model, name: this.profile.providerName, inputModalities: ['text'] } }
   async *stream() {

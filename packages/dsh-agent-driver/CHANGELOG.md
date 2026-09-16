@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- 修复：SentinelAdapter 的 `listModels()` 不再返回占位模型，改为空列表。此前「Claude Code（原生会话）」「Hermes（原生会话）」两个占位条目会混入普通会话输入框右下角的官方模型列表（`buildModelCatalog` 按适配器 `listModels` 构建），普通会话选中后 `LlmRuntime.stream()` 直接抛错。空分组会被官方目录过滤，条目随之消失；原生会话自身的模型选择走 `discoverModels()` 不受影响。需重启 `dsh web` 生效。
+
 - 修复：`--safe-mode` 会使 Claude CLI（2.1.237 实测）完全不加载 MCP 服务，与 `--permission-prompt-tool` 指向的审批 MCP 桥互斥，导致工具调用报 "MCP tool mcp__dsh_approval__request_permission not found. Available MCP tools: none"。现在走审批桥的回合自动省略 `--safe-mode`。
 
 - 修复：审批 MCP 桥（`claude-permission-mcp.js`）在回环连接失败/关闭时因未处理的 promise rejection 直接崩溃，导致 Claude 侧报 "MCP tool mcp__dsh_approval__request_permission not found. Available MCP tools: none"。现在任何 socket 故障都保持进程存活并正常应答 `initialize`/`tools/list`，审批不可用时降级为 fail-closed 的 deny。
