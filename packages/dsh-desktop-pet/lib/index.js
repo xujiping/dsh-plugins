@@ -161,7 +161,8 @@ async function queryProviderBalance(p) {
     const periods = item?.periods
     if (Array.isArray(periods) && periods.length) {
       let minLeft = null
-      const labels = { '5h': '5h', weekly: '周', monthly: '月', session: '会话' }
+      // coding-plan 的 session 窗口实测 reset_at 为 ~5h 后，与 agent-plan 的 5h 同为 5 小时滚动窗。
+      const labels = { '5h': '5h', weekly: '周', monthly: '月', session: '5h' }
       const segments = periods.map(pr => {
         // percent = 已用百分比（部分窗口只有 percent 无 used/total）。
         const lp = Number.isFinite(pr.percent)
