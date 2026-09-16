@@ -1,0 +1,12 @@
+# dsh-web-sites bundle patch: inserts the plugin into a profile's layer stack.
+# Applied as a profile bundle layer (the `dsh.bundle.patch` manifest field) over
+# dsh-base; activate with `dsh plugin --profile <name> add dsh-web-sites` (npm)
+# or the monorepo link path.
+#
+# The row is a bare plugin by package name: the host half (exports ".") serves
+# the /api/dsh-sites/* config routes, and the `dsh.client` declaration in
+# package.json makes the browser half (exports "./client") load in the web GUI,
+# where it injects the site launcher list + iframe panel.
+- insert:
+    - id: web-sites
+      name: 'dsh-web-sites'

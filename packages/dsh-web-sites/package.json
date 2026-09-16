@@ -1,0 +1,53 @@
+{
+  "name": "dsh-web-sites",
+  "version": "0.1.0",
+  "description": "DSH Web 集中管理自己的网站系统：左侧浮起「🌐 我的网站系统」列表，点击后在主面板区域以 iframe 面板打开站点（带刷新 / 新标签 / 管理入口），站点清单存于 ~/.dsh/sites.yaml，支持界面可视化增删改。纯 DOM 注入 + host 路由，不改 DSH 源码。",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "web",
+    "sites",
+    "launcher",
+    "iframe",
+    "dashboard"
+  ],
+  "author": "xujiping",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xujiping/dsh-plugins.git",
+    "directory": "packages/dsh-web-sites"
+  },
+  "homepage": "https://github.com/xujiping/dsh-plugins/tree/main/packages/dsh-web-sites",
+  "bugs": {
+    "url": "https://github.com/xujiping/dsh-plugins/issues"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "node test/smoke.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "license": "MIT"
+}
