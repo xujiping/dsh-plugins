@@ -3,17 +3,18 @@
  *
  * A site launcher for your own web systems, all inside the GUI:
  *
- *   - A slim trigger strip floats on the LEFT edge of the window
- *     (「🌐 网站」). Click to expand a list of your configured sites.
- *   - The expanded list overlays the DSH sidebar column (same geometry,
- *     so it never disturbs the shell's React tree — everything lives on
- *     document.body with position:fixed).
+ *   - A menu row「🌐 我的网站系统」is injected INTO the sidebar, right above
+ *     the workspace/session tree ([role="tree"]) — i.e. below the
+ *     new-session button. It is a tree sibling, so React's reconciliation of
+ *     the tree children is never disturbed; a MutationObserver re-inserts it
+ *     if the shell re-renders it away.
+ *   - Clicking the menu drops a site list anchored right below it
+ *     (position:fixed on document.body, sidebar-wide).
  *   - Clicking a site opens a full-height iframe PANEL on the RIGHT side
  *     of the app frame (from the sidebar's right edge to the viewport /
  *     rightbar edge). The panel has a header bar: 刷新 / 新标签打开 / 管理 /
- *     关闭. Because sites may refuse embedding (X-Frame-Options /
- *     frame-ancestors) or lose cross-origin login cookies, a 「新标签打开」
- *     button is always available as the fallback.
+ *     关闭. While the panel is open, clicking ANY sidebar workspace/session
+ *     row ([role=treeitem]) dismisses it so the conversation shows through.
  *   - 「管理」opens a dialog to add / edit / delete sites; saving POSTs the
  *     full list back to the host, which persists it to ~/.dsh/sites.yaml.
  *
@@ -26,9 +27,9 @@
  *
  * Implementation notes
  * --------------------
- * - Everything is appended to document.body (outside React), position:fixed,
- *   mounted idempotently, and self-healed by a MutationObserver (re-inject the
- *   trigger if the shell re-renders). Mount failures are logged, never thrown.
+ * - Overlays (list / panel / dialogs) are appended to document.body (outside
+ *   React), position:fixed, mounted idempotently, and self-healed by a
+ *   MutationObserver. Mount failures are logged, never thrown.
  * - The panel iframe has `sandbox` omitted on purpose: sites need cookies /
  *   JS to function. Cross-origin login is subject to the browser's third-party
  *   cookie policy — the README documents how to make self-hosted sites
@@ -112,57 +113,61 @@ window.__ModuleLoader__.load({
       style.id = 'dsh-web-sites-styles'
       style.setAttribute('data-plugin', 'dsh-web-sites')
       style.textContent = `
-/* ---- trigger strip: slim vertical pill on the LEFT edge ---- */
-.dws-trigger {
-  position: fixed;
-  left: 6px;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 48;
+/* ---- inline menu row: lives in the sidebar, above the workspace tree ---- */
+.dws-menu {
+  all: unset;
+  box-sizing: border-box;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 2px;
-  width: 36px;
-  padding: 8px 0;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 18px;
-  background: var(--dsw-alias-bg-base, #fff);
-  box-shadow: var(--dsw-shadow-lv3, 0 4px 16px rgba(0,0,0,0.12));
-  color: var(--dsw-alias-label-secondary, #666);
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  margin: 4px 0 6px;
+  padding: 0 10px;
+  border-radius: 8px;
   cursor: pointer;
-  user-select: none;
-  -webkit-user-select: none;
-  transition: color .12s ease, background-color .12s ease, transform .12s ease;
+  color: var(--dsw-alias-label-secondary, #666);
+  font-size: 13px;
+  transition: color .12s ease, background-color .12s ease;
 }
-.dws-trigger:hover {
+.dws-menu:hover {
   color: var(--dsw-alias-label-primary, #1a1a1a);
   background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,0.06));
 }
-.dws-trigger[data-active="true"] {
-  color: var(--dsw-alias-button-info-fill, #4d6bfe);
+.dws-menu:focus-visible {
+  outline: 2px solid var(--dsw-alias-button-info-fill, #4d6bfe);
+  outline-offset: -2px;
 }
-.dws-trigger-icon { font-size: 16px; line-height: 1; }
-.dws-trigger-label {
-  writing-mode: vertical-rl;
+.dws-menu[data-active="true"] {
+  color: var(--dsw-alias-label-primary, #1a1a1a);
+  background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,0.06));
+}
+.dws-menu-icon { font-size: 14px; line-height: 1; }
+.dws-menu-label { flex: 1 1 auto; min-width: 0; font-weight: 500; }
+.dws-menu-count {
+  flex: 0 0 auto;
   font-size: 10px;
-  letter-spacing: 1px;
-  font-weight: 500;
+  color: var(--dsw-alias-label-tertiary, #999);
 }
+.dws-menu-caret { flex: 0 0 auto; font-size: 10px; transition: transform .12s ease; }
+.dws-menu[data-active="true"] .dws-menu-caret { transform: rotate(90deg); }
 
-/* ---- expanded site list: overlays the sidebar column ---- */
+/* ---- expanded site list: dropdown anchored below the sidebar menu row ---- */
 .dws-list {
   position: fixed;
   left: 0;
-  top: 0;
-  bottom: 0;
   z-index: 49;
+  max-height: 60vh;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
   background: var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-base, #fff));
   border-right: .5px solid var(--dsw-alias-border-l3);
-  animation: dws-list-in .16s var(--ds-ease-in-out, ease);
+  border-bottom: .5px solid var(--dsw-alias-border-l3);
+  box-shadow: var(--dsw-shadow-lv3, 0 8px 28px rgba(0,0,0,0.14));
+  border-radius: 0 0 12px 0;
+  animation: dws-list-in .14s var(--ds-ease-in-out, ease);
+  overflow: hidden;
 }
 @keyframes dws-list-in {
   from { opacity: 0; transform: translateX(-6px); }
@@ -458,7 +463,7 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
     }
 
     // ------------------------------------------------------------------ dom
-    let triggerEl = null
+    let menuEl = null
     let listEl = null
     let panelEl = null
     let manageEl = null
@@ -479,23 +484,63 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
       }, 3000)
     }
 
-    function ensureTrigger() {
-      if (triggerEl !== null && document.body.contains(triggerEl)) return
-      triggerEl = document.createElement('button')
-      triggerEl.type = 'button'
-      triggerEl.className = 'dws-trigger'
-      triggerEl.setAttribute('data-plugin', 'dsh-web-sites')
-      triggerEl.title = '我的网站系统'
-      triggerEl.setAttribute('aria-label', '我的网站系统')
+    /**
+     * Inject the inline menu row into the sidebar, right above the workspace /
+     * session tree ([role="tree"]) — i.e. below the new-session button. The row
+     * is inserted as a sibling of the tree, so React's reconciliation of the
+     * tree's own children is never disturbed; if a re-render removes it, the
+     * MutationObserver sweep re-inserts it.
+     */
+    function ensureMenu() {
+      const tree = sidebarTree()
+      if (!(tree instanceof HTMLElement) || !tree.parentElement) return
+      if (menuEl !== null) {
+        // already present and in the right spot? (right before the tree)
+        if (document.body.contains(menuEl)
+          && menuEl.parentElement === tree.parentElement
+          && menuEl.nextElementSibling === tree) return
+        menuEl.remove()
+      }
+      menuEl = document.createElement('button')
+      menuEl.type = 'button'
+      menuEl.className = 'dws-menu'
+      menuEl.setAttribute('data-plugin', 'dsh-web-sites')
+      menuEl.title = '我的网站系统'
+      menuEl.setAttribute('aria-label', '我的网站系统')
       const icon = document.createElement('span')
-      icon.className = 'dws-trigger-icon'
+      icon.className = 'dws-menu-icon'
       icon.textContent = '🌐'
       const label = document.createElement('span')
-      label.className = 'dws-trigger-label'
-      label.textContent = '网站'
-      triggerEl.append(icon, label)
-      triggerEl.addEventListener('click', () => toggleList())
-      document.body.append(triggerEl)
+      label.className = 'dws-menu-label'
+      label.textContent = '我的网站系统'
+      const count = document.createElement('span')
+      count.className = 'dws-menu-count'
+      count.textContent = `${sites.length}`
+      const caret = document.createElement('span')
+      caret.className = 'dws-menu-caret'
+      caret.textContent = '›'
+      menuEl.append(icon, label, count, caret)
+      menuEl.addEventListener('click', () => toggleList())
+      if (listOpen) menuEl.setAttribute('data-active', 'true')
+      tree.parentElement.insertBefore(menuEl, tree)
+    }
+
+    /**
+     * The sidebar workspace/session tree (stable structural hook). The session
+     * list is the FIRST [role=tree] inside the app frame — DOM order is stable
+     * even when a search-results tree mounts later, so we never follow it.
+     */
+    function sidebarTree() {
+      const frame = frameEl()
+      const scope = frame instanceof HTMLElement ? frame : document
+      return scope.querySelector('[role="tree"]')
+    }
+
+    /** Refresh the sidebar menu row badge (site count). */
+    function refreshMenu() {
+      if (menuEl === null) return
+      const count = $('.dws-menu-count', menuEl)
+      if (count) count.textContent = `${sites.length}`
     }
 
     // ---------------------------------------------------------------- list
@@ -535,7 +580,8 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
 
     function openList() {
       listOpen = true
-      triggerEl?.setAttribute('data-active', 'true')
+      menuEl?.setAttribute('data-active', 'true')
+      ensureMenu()
       if (listEl === null) {
         listEl = document.createElement('div')
         listEl.className = 'dws-list'
@@ -576,7 +622,7 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
 
     function closeList() {
       listOpen = false
-      triggerEl?.removeAttribute('data-active')
+      menuEl?.removeAttribute('data-active')
       listEl?.remove()
       listEl = null
     }
@@ -586,10 +632,20 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
       else openList()
     }
 
+    /** Anchor the dropdown right below the sidebar menu row, sidebar-wide. */
     function positionList() {
       if (!listEl) return
       const { sidebar } = layoutWidths()
-      listEl.style.width = `${Math.max(180, sidebar)}px`
+      const width = Math.max(180, sidebar)
+      let top = 120
+      if (menuEl instanceof HTMLElement && menuEl.offsetHeight > 0) {
+        top = menuEl.getBoundingClientRect().bottom + 2
+      }
+      // clamp: never run past the viewport bottom
+      const maxTop = Math.max(0, window.innerHeight - 80)
+      if (top > maxTop) top = maxTop
+      listEl.style.width = `${width}px`
+      listEl.style.top = `${top}px`
     }
 
     // ---------------------------------------------------------------- panel
@@ -849,6 +905,7 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
         siteById = new Map(saved.map(s => [s.id, s]))
         closeManage()
         if (listOpen) renderList()
+        refreshMenu()
         showToast(`已保存 ${saved.length} 个站点`)
       } catch (error) {
         showToast(`保存失败：${error.message}`)
@@ -885,12 +942,14 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
         siteById = new Map()
       }
       if (listOpen) renderList()
+      refreshMenu()
     }
 
-    /** Re-inject trigger if the shell re-rendered and removed it; re-anchor geometry. */
+    /** Re-inject the sidebar menu if the shell re-rendered; re-anchor geometry. */
     function sweep() {
       if (ctx === null || !mounted) return
-      ensureTrigger()
+      ensureMenu()
+      refreshMenu()
       if (listOpen) positionList()
       if (panelEl !== null && panelOpenId !== null) positionPanel()
       // restore an open site after a reload
@@ -905,15 +964,30 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
       }
     }
 
+    /**
+     * Click-away wiring: when a site panel is open, clicking any sidebar
+     * workspace/session row ([role=treeitem]) dismisses the panel so the
+     * conversation shows through — the user asked for exactly this flow.
+     * Capture-phase delegation on document; ignores clicks inside our own UI.
+     */
+    function onDocumentClick(event) {
+      if (panelEl === null || panelOpenId === null) return
+      const target = event.target
+      if (!(target instanceof Element)) return
+      if (target.closest('[data-plugin="dsh-web-sites"]')) return
+      const row = target.closest('[role="treeitem"]')
+      if (row instanceof Element) closePanel()
+    }
+
     // ------------------------------------------------------------------ apply
     function apply(clientCtx) {
       try {
         ctx = clientCtx
         mounted = true
         ensureStyles()
-        ensureTrigger()
+        ensureMenu()
 
-        // self-heal: re-inject trigger + re-anchor on shell re-render / resize
+        // self-heal: re-inject menu + re-anchor on shell re-render / resize
         observer = new MutationObserver(() => { sweep() })
         observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] })
 
@@ -921,9 +995,13 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
         const frame = frameEl()
         if (frame) resizeObserver.observe(frame)
 
+        // clicking a sidebar session/workspace row collapses the open site panel
+        document.addEventListener('click', onDocumentClick, true)
+
         void reloadSites().then(() => { sweep() })
 
         clientCtx.effect(() => () => {
+          document.removeEventListener('click', onDocumentClick, true)
           observer?.disconnect()
           observer = null
           resizeObserver?.disconnect()
@@ -931,8 +1009,8 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
           closeList()
           closePanel()
           closeManage()
-          triggerEl?.remove()
-          triggerEl = null
+          menuEl?.remove()
+          menuEl = null
           document.getElementById('dsh-web-sites-styles')?.remove()
           if (toastTimer) { clearTimeout(toastTimer); toastTimer = 0 }
           if (toastEl !== null) { toastEl.remove(); toastEl = null }
