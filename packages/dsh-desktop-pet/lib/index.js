@@ -40,9 +40,9 @@ export function restartSupported(argv = process.argv) {
 // 缺失时回退读 ~/.dsh/.credentials.yaml（纯 KEY: value 扁平文件，正则取值，不引 yaml）。
 // 各平台查询通道（2026-09 实测）：
 //   api.deepseek.com        GET /user/balance（Bearer key）→ CNY 余额
-//   ark.../api/plan         `arkcli usage balance --type plan` → 5h/周/月额度百分比
+//   ark...（/api/coding 等）  `arkcli usage balance --type plan` → 5h/周/月额度百分比
 //   open.bigmodel.cn        GET /api/monitor/usage/quota/limit（Bearer key）→ 剩余百分比
-//   其他（minimax / 内网网关）无公开余额接口，标记为不支持
+//   api.minimaxi.com        GET /v1/token_plan/remains（Bearer key）→ 5h/周剩余百分比
 
 const DSH_DIR = join(homedir(), '.dsh')
 const BALANCE_TTL = 55 * 1000 // 同一 provider 结果缓存 55s（客户端每分钟后台轮询）
@@ -122,6 +122,18 @@ const fmtPct = (used, total) => (Number.isFinite(total) && total > 0)
   ? `${Math.max(0, Math.round((1 - (used || 0) / total) * 100))}%`
   : '—'
 
+const leftPct = (used, total) => (Number.isFinite(total) && total > 0)
+  ? Math.max(0, Math.round((1 - (used || 0) / total) * 100))
+  : null
+
+// 剩余量分级：>=50% 充足（绿）、20–49% 偏低（橙）、<20% 告急（红）。
+function quotaLevel(minLeft) {
+  if (!Number.isFinite(minLeft)) return undefined
+  if (minLeft < 20) return 'low'
+  if (minLeft < 50) return 'mid'
+  return 'ok'
+}
+
 async function queryProviderBalance(p) {
   let host = ''
   try { host = new URL(p.baseURL).hostname } catch { /* 无 baseURL */ }
@@ -138,17 +150,51 @@ async function queryProviderBalance(p) {
     return { kind: 'error', text: '查询失败' }
   }
 
-  if (host.endsWith('volces.com') && p.baseURL.includes('/api/plan')) {
+  if (host.endsWith('volces.com')) {
+    // arkcli 走自身 SSO 登录态（与本 provider 的 API Key 无关）。
+    // 输出含 agent-plan / coding-plan 等多个套餐，按 provider id 挑对应项。
+    const want = p.id.includes('coding') ? 'coding-plan'
+      : p.id.includes('agent') ? 'agent-plan' : ''
     const data = await runArkPlanBalance(p.apiKeyEnv)
-    const periods = data?.items?.[0]?.periods
+    const items = Array.isArray(data?.items) ? data.items : []
+    const item = items.find(it => it?.product === want) || items[0]
+    const periods = item?.periods
     if (Array.isArray(periods) && periods.length) {
-      const text = periods.map(pr => {
-        const used = Number.isFinite(pr.used) ? pr.used : 0
-        return `${pr.label} ${fmtPct(used, pr.total)}`
-      }).join(' · ')
-      return { kind: 'quota', text }
+      let minLeft = null
+      const labels = { '5h': '5h', weekly: '周', monthly: '月', session: '会话' }
+      const segments = periods.map(pr => {
+        // percent = 已用百分比（部分窗口只有 percent 无 used/total）。
+        const lp = Number.isFinite(pr.percent)
+          ? Math.max(0, Math.round(100 - pr.percent))
+          : leftPct(Number.isFinite(pr.used) ? pr.used : 0, pr.total)
+        if (lp !== null && (minLeft === null || lp < minLeft)) minLeft = lp
+        return { label: `${labels[pr.label] || pr.label}剩`, left: lp }
+      })
+      return { kind: 'quota', segments, level: quotaLevel(minLeft) }
     }
     return { kind: 'error', text: '查询失败（arkcli 未登录？）' }
+  }
+
+  if ((host === 'api.minimaxi.com' || host === 'www.minimax.io') && key) {
+    // MiniMax Coding Plan 公开配额接口（2026-09 实测）：Bearer API Key。
+    // model_remains[] 里 general 对应对话模型（M3 等），取 5h 窗 + 周窗剩余百分比。
+    const base = host === 'api.minimaxi.com' ? 'https://api.minimaxi.com' : 'https://www.minimax.io'
+    const { ok, data } = await fetchJson(`${base}/v1/token_plan/remains`,
+      { headers: { authorization: `Bearer ${key}` } })
+    const remains = Array.isArray(data?.model_remains) ? data.model_remains : []
+    const general = remains.find(r => r?.model_name === 'general') || remains[0]
+    if (ok && general) {
+      const leftOf = v => (Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : null)
+      const wins = [
+        { label: '5h剩', left: leftOf(general.current_interval_remaining_percent) },
+        { label: '周剩', left: leftOf(general.current_weekly_remaining_percent) },
+      ].filter(w => w.left !== null)
+      if (wins.length) {
+        return { kind: 'quota', segments: wins, level: quotaLevel(Math.min(...wins.map(w => w.left))) }
+      }
+      return { kind: 'quota', text: '无窗口配额' }
+    }
+    return { kind: 'error', text: '查询失败' }
   }
 
   if (host === 'open.bigmodel.cn' && key) {
@@ -171,8 +217,13 @@ async function queryProviderBalance(p) {
         wins.push({ label, left, order: l.type === 'TIME_LIMIT' ? 2 : (l.unit === 3 ? 0 : 1) })
       }
       wins.sort((a, b) => a.order - b.order)
-      const parts = wins.map(w => `${w.label}剩${w.left}%`)
-      if (parts.length) return { kind: 'quota', text: parts.join(' · ') }
+      if (wins.length) {
+        return {
+          kind: 'quota',
+          segments: wins.map(w => ({ label: `${w.label}剩`, left: w.left })),
+          level: quotaLevel(Math.min(...wins.map(w => w.left))),
+        }
+      }
       return { kind: 'quota', text: '无窗口配额' }
     }
     return { kind: 'error', text: '查询失败' }

@@ -393,6 +393,8 @@ body[data-ds-dark-theme] .dpet-root {
   box-sizing: border-box;
   min-width: 230px;
   max-width: 320px;
+  max-height: calc(100vh - 16px);   /* 提供商过多时纵向滚动，不超出视口 */
+  overflow-y: auto;
   padding: 8px 10px;
   border-radius: 10px;
   background: var(--dsw-alias-bg-base);
@@ -421,8 +423,19 @@ body[data-ds-dark-theme] .dpet-root {
   justify-content: space-between;
   gap: 10px;
   padding: 2px 0;
+  min-width: 0;
+  max-width: 100%;
 }
-.dpet-tip-name { font-weight: 600; white-space: nowrap; }
+.dpet-tip-row > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;          /* 允许收缩，防止长名称/长余量文本撑出卡片 */
+}
+.dpet-tip-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .dpet-tip-models {
   font-size: 10px;
   color: var(--dsw-alias-label-tertiary);
@@ -431,10 +444,27 @@ body[data-ds-dark-theme] .dpet-root {
   text-overflow: ellipsis;
   max-width: 150px;
 }
-.dpet-tip-val { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dpet-tip-val {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 60%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
 .dpet-tip-val[data-kind="unsupported"] { color: var(--dsw-alias-label-tertiary); }
 .dpet-tip-val[data-kind="error"] { color: var(--dsw-alias-label-warning, #c77f1f); }
 .dpet-tip-val[data-kind="quota"] { color: var(--dsw-alias-label-success, #2f9e63); }
+/* 剩余量分级配色：充足=绿 / 偏低=橙 / 告急=红（取各窗口剩余最小值；token 缺失时回退固定色） */
+.dpet-tip-val[data-level="ok"] { color: var(--dsw-alias-label-success, #2f9e63); }
+.dpet-tip-val[data-level="mid"] { color: var(--dsw-alias-label-warning, #c77f1f); }
+.dpet-tip-val[data-level="low"] { color: var(--dsw-alias-label-error, #d64545); }
+/* 分段余量：仅百分比按该窗口剩余量上色，标签文字保持默认色 */
+.dpet-tip-pct { font-variant-numeric: tabular-nums; }
+.dpet-tip-pct[data-level="ok"] { color: var(--dsw-alias-label-success, #2f9e63); }
+.dpet-tip-pct[data-level="mid"] { color: var(--dsw-alias-label-warning, #c77f1f); }
+.dpet-tip-pct[data-level="low"] { color: var(--dsw-alias-label-error, #d64545); }
 
 /* ---- right-click config menu ---- */
 .dpet-menu {
@@ -856,6 +886,14 @@ body[data-ds-dark-theme] .dpet-root {
       if (balancePollTimer) { clearInterval(balancePollTimer); balancePollTimer = 0 }
     }
 
+    // 剩余量分级：<20% low / 20-49% mid / ≥50% ok（与 host 端阈值一致）
+    function quotaLevelOf(left) {
+      if (!Number.isFinite(left)) return undefined
+      if (left < 20) return 'low'
+      if (left < 50) return 'mid'
+      return 'ok'
+    }
+
     function buildTipRow(p) {
       const row = document.createElement('div')
       row.className = 'dpet-tip-row'
@@ -872,8 +910,26 @@ body[data-ds-dark-theme] .dpet-root {
       }
       const val = document.createElement('span')
       val.className = 'dpet-tip-val'
-      val.dataset.kind = p.kind || 'unsupported'
-      val.textContent = p.text || '—'
+      // 分段余量：标签（5h剩/周剩/月剩）保持默认前景色，仅 xx% 按该窗口剩余量上色
+      if (Array.isArray(p.segments) && p.segments.length) {
+        p.segments.forEach((seg, i) => {
+          if (i > 0) val.append(' · ')
+          val.append(seg.label)
+          if (seg.left === null || seg.left === undefined) {
+            val.append('—')
+          } else {
+            const pct = document.createElement('span')
+            pct.className = 'dpet-tip-pct'
+            pct.dataset.level = quotaLevelOf(seg.left)
+            pct.textContent = `${seg.left}%`
+            val.append(pct)
+          }
+        })
+      } else {
+        val.dataset.kind = p.kind || 'unsupported'
+        if (p.level) val.dataset.level = p.level   // 整段分级（旧格式兼容）
+        val.textContent = p.text || '—'
+      }
       row.append(nameWrap, val)
       return row
     }
