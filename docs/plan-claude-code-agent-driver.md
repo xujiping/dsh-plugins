@@ -107,7 +107,7 @@ sessionId(UUID) → {
 
 ### 3.3 Provider 与模型选择
 
-`session.prompt` 会检查当前 provider 是否有已注册 adapter。原生 Driver 使用独立的 `claude-code-native` provider / sentinel adapter 通过此检查，**不得复用**现有 `dsh-llm-agent-bridge` 的 `claude-code` provider：后者会扁平化 DSH 历史并重新运行 CLI，作为冷恢复回退会造成静默分叉。
+`session.prompt` 会检查当前 provider 是否有已注册 adapter。原生 Driver 使用独立的 `claude-code-native` provider / sentinel adapter 通过此检查，**不得复用**历史插件 `dsh-llm-agent-bridge`（已于 2026-09 删除，功能被本包取代）的 `claude-code` provider：后者会扁平化 DSH 历史并重新运行 CLI，作为冷恢复回退会造成静默分叉。
 
 创建原生 Session 时，Host 立即在**该 Session 自身**写入 `claude-code-native/default` request header；浏览器只打开返回的 session。严禁为此调用通用 `sessions.selectModel()`：该 API 除了切换当前会话，还会持久化 DSH 的全局默认模型。若将 sentinel 写入全局默认值，下一次“默认 DeepSeek Harness”创建的标准 loop 会错误调用 `LlmRuntime.stream()`，而 sentinel 必然拒绝该路径。默认 Harness 入口也不能调用 `workspaces.startSession()`，因为它会复用同工作区任意空会话（包括原生会话）；必须经 `sessions.create({ workspaceId })` 显式创建标准 Session + loop Agent。
 
@@ -255,7 +255,7 @@ turn/end
 
 - 单元：JSONL 解析、事件顺序、surface metadata、callId 配对、错误与取消、UUID 映射。
 - 集成：fake CLI；真实 Claude CLI 的手工无副作用样本；重启恢复；CLI 缺失、登录失效、非零退出、超时和孤儿进程。
-- 回归：`packages/dsh-new-session-route/test/smoke.mjs` 与 `packages/dsh-llm-agent-bridge/test/{smoke,integration}.mjs` 保持通过；当前两个包没有 npm `test` 脚本，新包必须提供标准测试脚本。
+- 回归：`packages/dsh-agent-driver/test/{smoke,commands,permission-bridge}.mjs`（`npm test`）保持通过；`dsh-chat-scroll-nav` / `dsh-desktop-pet` / `dsh-session-archive` 的 `test/smoke.mjs` 保持通过。
 - 发布前人工验证：一轮 `Bash` 代码任务、一次取消、一次刷新、一次 Host 重启，以及一次权限拒绝/危险命令的策略验证。
 
 ## 8. 最终决策

@@ -7,39 +7,29 @@
 
 | 包 | 功能 | 安装 |
 |---|---|---|
-| `packages/dsh-global-memory` | 全局记忆：侧边栏「全局记忆」页，直接查看/编辑 `~/.dsh/AGENTS.md` 与 `~/.dsh/memory/*.md` | `dsh plugin --profile <name> add dsh-global-memory` |
+| `packages/dsh-agent-driver` | 原生智能体会话驱动（Claude Code + Hermes 双驱动）：新会话菜单选后端，同 UUID 绑定 DSH 与 CLI 会话，含严格 Remote、原子发布、只读工具与 MCP 隔离 | `dsh plugin --profile <name> add link:~/AiProjects/dsh-plugins/packages/dsh-agent-driver` |
 | `packages/dsh-chat-scroll-nav` | 对话右侧快速导航条：聊天区右缘竖向迷你导航（类似手机通讯录索引），点/拖即跳转到对应消息，当前消息高亮 | `dsh plugin --profile <name> add dsh-chat-scroll-nav` |
-| `packages/dsh-new-session-route` | 新会话路由：侧边栏「新会话」按钮点开下拉，选择新会话后端 —— 默认 DeepSeek Harness 或 Claude Code（经 `dst-gateway` provider 路由） | `dsh plugin --profile <name> add dsh-new-session-route` |
-| `packages/dsh-agent-driver` | Claude Code 原生会话驱动（M0 架构验证中）：同 UUID 绑定 DSH 与 Claude 会话，含严格 Remote、原子发布、只读工具与 MCP 隔离 | `dsh plugin --profile <name> add link:~/AiProjects/dsh-plugins/packages/dsh-agent-driver` |
 | `packages/dsh-desktop-pet` | 桌面宠物：Web GUI 里一只纯 CSS 小宠，状态机驱动 idle/walk/sleep/happy/eat/typing/work，点击/拖拽/双击喂食，联动会话状态（AI 输出中打字、工具执行中敲锤） | `dsh plugin --profile <name> add link:~/AiProjects/dsh-plugins/packages/dsh-desktop-pet` |
-
-> **已搁置（2026-08-21 起从 desktop profile 卸载）**：`dsh-llm-agent-bridge` 与
-> `dsh-agent-terminal` 两个插件对效果不满意，暂时不用，源码保留在
-> `packages/` 下；以后有更好的想法时可能重新优化再装回。装回方式见下文
-> 「安装方式」与包内 README。
+| `packages/dsh-session-archive` | 一键归档空闲会话：侧边栏 workspace 目录行悬停出按钮，按天数（默认 3 天）归档不活动会话，可恢复 | `dsh plugin --profile <name> add link:~/AiProjects/dsh-plugins/packages/dsh-session-archive` |
 
 ```
 packages/
-  dsh-global-memory/       全局记忆插件（host 半边 lib/index.js + client 半边 lib/client.js）
-  dsh-chat-scroll-nav/     对话右侧快速导航条（纯 client 半边 lib/client.js；host 半边空实现）
-  dsh-new-session-route/   新会话路由下拉（纯 client 半边；cordis client 插件，DOM 钩住「新会话」按钮 + selectModel）
-  dsh-agent-driver/     Claude Code 原生会话驱动（M0：自定义 Agent/Session + Typert Remote + stream-json）
-  dsh-desktop-pet/         桌面宠物（纯 client 半边；CSS 关键帧动作 + 状态机 + 节律/交互/会话三类触发器）
-  dsh-llm-agent-bridge/    LLM 适配器桥接（已搁置；host 半边，无 client；接入外部 agent CLI）
-  dsh-agent-terminal/      智能体终端（已搁置；host 半边 PTY 注册表 + client 半边 xterm 面板；src/client.ts 构建产物为 lib/client.js）
+  dsh-agent-driver/    原生智能体会话驱动（Host+Client 半边；Claude Code / Hermes 双驱动 + 新会话菜单）
+  dsh-chat-scroll-nav/ 对话右侧快速导航条（纯 client 半边 lib/client.js；host 半边空实现）
+  dsh-desktop-pet/     桌面宠物（纯 client 半边；CSS 关键帧动作 + 状态机 + 节律/交互/会话三类触发器）
+  dsh-session-archive/ 一键归档空闲会话（纯 client 半边；workspace 目录行按钮 + archiveSession RPC）
 ```
 
-## 安装方式（以 dsh-global-memory 为例）
+> 曾有的 `dsh-new-session-route`、`dsh-llm-agent-bridge`、`dsh-agent-terminal` 三个
+> 插件（及 `dsh-global-memory`）已删除：前三个的功能均被 `dsh-agent-driver` 取代
+> （新会话下拉选后端已由 agent-driver 内置），`dsh-global-memory` 本地未安装。
+> 历史版本可从 git 历史恢复。
+
+## 安装方式（以 dsh-agent-driver 为例）
 
 ```bash
-# 从 npm（发布后可用）
-dsh plugin --profile web add dsh-global-memory
-
-# 或从本仓库
-dsh plugin --profile web add github:xujiping/dsh-plugins
-
-# 或本地 link 调试（不发布也能用）
-dsh plugin --profile web add link:~/AiProjects/dsh-plugins/packages/dsh-global-memory
+# 从本仓库
+dsh plugin --profile web add link:~/AiProjects/dsh-plugins/packages/dsh-agent-driver
 ```
 
 `--profile` 必填（`dsh plugin` 转发到 pnpm 按 profile 安装），`web` 换成你的实际
@@ -67,7 +57,8 @@ profile 名。装完重启 `dsh web`（或重载 profile）生效。
 
 ## 开发
 
-每个包自带测试（如 `packages/dsh-global-memory/test/smoke.mjs`，`node test/smoke.mjs` 运行）。
+每个包自带测试（如 `packages/dsh-agent-driver/test/smoke.mjs`，`node test/smoke.mjs` 运行；
+agent-driver 与 session-archive 在 package.json 里声明了 `npm test` 脚本）。
 改 client 半边后刷新 Web GUI 即可看到效果（纯 DOM，MutationObserver 自愈）。
 
 ## License

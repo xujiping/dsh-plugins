@@ -19,7 +19,12 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Syntax check
         run: |
-          node --check packages/dsh-global-memory/lib/index.js
-          node --check packages/dsh-global-memory/lib/client.js
+          node --check packages/dsh-agent-driver/lib/index.js
+          node --check packages/dsh-agent-driver/lib/client.js
+          node --check packages/dsh-chat-scroll-nav/lib/client.js
+          node --check packages/dsh-desktop-pet/lib/client.js
+          node --check packages/dsh-session-archive/lib/client.js
       - name: Smoke tests (sandboxed HOME, no real ~/.dsh needed)
-        run: node packages/dsh-global-memory/test/smoke.mjs
+        run: |
+          cd packages/dsh-agent-driver && npm test
+          cd ../dsh-session-archive && npm test
