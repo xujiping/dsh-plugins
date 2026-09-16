@@ -157,13 +157,14 @@ async function queryProviderBalance(p) {
     const { ok, data } = await fetchJson('https://open.bigmodel.cn/api/monitor/usage/quota/limit',
       { headers: { authorization: `Bearer ${key}` } })
     if (ok && Array.isArray(data?.data?.limits)) {
-      // 窗口语义（参考 pi-zhipu-usage）：TOKENS_LIMIT unit=3 → 5h 滚动窗，unit=6 → 周窗；TIME_LIMIT → MCP 工具请求窗。
+      // 窗口语义（参考 ai-usagebar zai/types.rs 抓包文档）：TOKENS_LIMIT unit=3 → 5h 滚动窗，unit=6 → 周窗；
+      // TIME_LIMIT → 月度 MCP 工具调用上限（30 天窗口，nextResetTime 指向下月）。
       const wins = []
       for (const l of data.data.limits) {
         if (!Number.isFinite(l.percentage)) continue
         const left = Math.max(0, 100 - l.percentage)
         let label
-        if (l.type === 'TIME_LIMIT') label = '工具'
+        if (l.type === 'TIME_LIMIT') label = '月'
         else if (l.unit === 3) label = '5h'
         else if (l.unit === 6) label = '周'
         else label = '窗口'
