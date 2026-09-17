@@ -117,12 +117,14 @@ window.__ModuleLoader__.load({
 .dws-menu {
   all: unset;
   box-sizing: border-box;
+  position: fixed;
+  z-index: 80;
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
   height: 30px;
-  margin: 4px 0 6px;
+  margin: 0;
   padding: 0 10px;
   border-radius: 8px;
   cursor: pointer;
@@ -493,12 +495,17 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
      */
     function ensureMenu() {
       const tree = sidebarTree()
-      if (!(tree instanceof HTMLElement) || !tree.parentElement) return
+      if (!(tree instanceof HTMLElement)) {
+        menuEl?.remove()
+        return
+      }
       if (menuEl !== null) {
-        // already present and in the right spot? (right before the tree)
-        if (document.body.contains(menuEl)
-          && menuEl.parentElement === tree.parentElement
-          && menuEl.nextElementSibling === tree) return
+        // 菜单不能作为 React 侧边栏的子节点；新版 DSH 会在重绘时移除它，
+        // 与 MutationObserver 互相触发，最终阻塞客户端插件装配。
+        if (document.body.contains(menuEl)) {
+          positionMenu(tree)
+          return
+        }
         menuEl.remove()
       }
       menuEl = document.createElement('button')
@@ -522,7 +529,26 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
       menuEl.append(icon, label, count, caret)
       menuEl.addEventListener('click', () => toggleList())
       if (listOpen) menuEl.setAttribute('data-active', 'true')
-      tree.parentElement.insertBefore(menuEl, tree)
+      document.body.append(menuEl)
+      positionMenu(tree)
+    }
+
+    /**
+     * 菜单脱离 React 树后仍贴在会话树上方；布局变化由 ResizeObserver 与
+     * 自愈扫描驱动，避免直接改写 React 管理的 DOM。
+     */
+    function positionMenu(tree = sidebarTree()) {
+      if (menuEl === null || !(tree instanceof HTMLElement)) return
+      const rect = tree.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) {
+        menuEl.style.display = 'none'
+        return
+      }
+      const height = menuEl.getBoundingClientRect().height || 30
+      menuEl.style.display = 'flex'
+      menuEl.style.left = `${Math.round(rect.left)}px`
+      menuEl.style.top = `${Math.max(8, Math.round(rect.top - height - 4))}px`
+      menuEl.style.width = `${Math.round(rect.width)}px`
     }
 
     /**
@@ -950,6 +976,7 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
       if (ctx === null || !mounted) return
       ensureMenu()
       refreshMenu()
+      positionMenu()
       if (listOpen) positionList()
       if (panelEl !== null && panelOpenId !== null) positionPanel()
       // restore an open site after a reload
@@ -979,8 +1006,26 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
       if (row instanceof Element) closePanel()
     }
 
+    function dispose() {
+      document.removeEventListener('click', onDocumentClick, true)
+      observer?.disconnect()
+      observer = null
+      resizeObserver?.disconnect()
+      resizeObserver = null
+      closeList()
+      closePanel()
+      closeManage()
+      menuEl?.remove()
+      menuEl = null
+      document.getElementById('dsh-web-sites-styles')?.remove()
+      if (toastTimer) { clearTimeout(toastTimer); toastTimer = 0 }
+      if (toastEl !== null) { toastEl.remove(); toastEl = null }
+      mounted = false
+      ctx = null
+    }
+
     // ------------------------------------------------------------------ apply
-    function apply(clientCtx) {
+    function mount(clientCtx) {
       try {
         ctx = clientCtx
         mounted = true
@@ -989,7 +1034,7 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
 
         // self-heal: re-inject menu + re-anchor on shell re-render / resize
         observer = new MutationObserver(() => { sweep() })
-        observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style'] })
+        observer.observe(document.body, { childList: true, subtree: true })
 
         resizeObserver = new ResizeObserver(() => { sweep() })
         const frame = frameEl()
@@ -999,27 +1044,23 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
         document.addEventListener('click', onDocumentClick, true)
 
         void reloadSites().then(() => { sweep() })
-
-        clientCtx.effect(() => () => {
-          document.removeEventListener('click', onDocumentClick, true)
-          observer?.disconnect()
-          observer = null
-          resizeObserver?.disconnect()
-          resizeObserver = null
-          closeList()
-          closePanel()
-          closeManage()
-          menuEl?.remove()
-          menuEl = null
-          document.getElementById('dsh-web-sites-styles')?.remove()
-          if (toastTimer) { clearTimeout(toastTimer); toastTimer = 0 }
-          if (toastEl !== null) { toastEl.remove(); toastEl = null }
-          mounted = false
-          ctx = null
-        }, 'dsh-web-sites: inject')
       } catch (error) {
         console.warn('[dsh-web-sites] mount failed:', error)
       }
+    }
+
+    function apply(clientCtx) {
+      // 插件装配阶段只登记生命周期；等核心 UI 先完成首次渲染后再触碰 DOM，
+      // 防止侧边栏仍在由 React 建树时发生竞争，卡住 "Loading plugins"。
+      let disposed = false
+      const timer = setTimeout(() => {
+        if (!disposed) mount(clientCtx)
+      }, 0)
+      clientCtx.effect(() => () => {
+        disposed = true
+        clearTimeout(timer)
+        dispose()
+      }, 'dsh-web-sites: inject')
     }
 
     exports.apply = apply

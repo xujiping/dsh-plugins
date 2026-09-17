@@ -21,6 +21,15 @@ import { join } from 'node:path'
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { apply, trusted, readSites, writeSites } from '../lib/index.js'
 
+// -------------------------------------------------------- client isolation
+// 菜单必须留在 React 侧边栏树外，否则新版 DSH 的重绘会与自愈监听形成循环。
+{
+  const client = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  assert.match(client, /document\.body\.append\(menuEl\)/)
+  assert.doesNotMatch(client, /insertBefore\(menuEl, tree\)/)
+  assert.match(client, /const timer = setTimeout\(\(\) =>/)
+}
+
 // ------------------------------------------------------------------ helpers
 let n = 0
 function tmpFile(name = 'sites.yaml') {
