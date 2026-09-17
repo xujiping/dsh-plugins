@@ -3,11 +3,9 @@
  *
  * A site launcher for your own web systems, all inside the GUI:
  *
- *   - A menu row「🌐 我的网站系统」is injected INTO the sidebar, right above
- *     the workspace/session tree ([role="tree"]) — i.e. below the
- *     new-session button. It is a tree sibling, so React's reconciliation of
- *     the tree children is never disturbed; a MutationObserver re-inserts it
- *     if the shell re-renders it away.
+ *   - 菜单「🌐 我的网站系统」挂在 body，锚定 sidebar.workspaces 插槽。
+ *     工作区容器通过 CSS 预留菜单高度，位于新会话下方、工作区标题上方；
+ *     不插入 React 管理的子节点，MutationObserver 负责幂等自愈。
  *   - Clicking the menu drops a site list anchored right below it
  *     (position:fixed on document.body, sidebar-wide).
  *   - Clicking a site opens a full-height iframe PANEL on the RIGHT side
@@ -53,6 +51,7 @@ window.__ModuleLoader__.load({
     let ctx = null
     let observer = null
     let resizeObserver = null
+    let resizeTarget = null
     let sites = []
     let siteById = new Map()
     let mounted = false
@@ -113,7 +112,14 @@ window.__ModuleLoader__.load({
       style.id = 'dsh-web-sites-styles'
       style.setAttribute('data-plugin', 'dsh-web-sites')
       style.textContent = `
-/* ---- inline menu row: lives in the sidebar, above the workspace tree ---- */
+/* 为悬浮菜单保留真实布局空间，避免覆盖工作区标题。 */
+[data-slot="sidebar.workspaces"] > :first-child {
+  padding-block-start: 36px;
+}
+body:has([data-sidebar-collapsed="true"]) .dws-menu,
+body:has([data-sidebar-collapsed="true"]) .dws-list {
+  display: none !important;
+}
 .dws-menu {
   all: unset;
   box-sizing: border-box;
@@ -123,7 +129,7 @@ window.__ModuleLoader__.load({
   align-items: center;
   gap: 8px;
   width: 100%;
-  height: 30px;
+  height: 32px;
   margin: 0;
   padding: 0 10px;
   border-radius: 8px;
@@ -486,24 +492,22 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
       }, 3000)
     }
 
-    /**
-     * Inject the inline menu row into the sidebar, right above the workspace /
-     * session tree ([role="tree"]) — i.e. below the new-session button. The row
-     * is inserted as a sibling of the tree, so React's reconciliation of the
-     * tree's own children is never disturbed; if a re-render removes it, the
-     * MutationObserver sweep re-inserts it.
-     */
+    /** 菜单挂在 body，工作区插槽只用 CSS 占位，不改动 React 子节点。 */
     function ensureMenu() {
-      const tree = sidebarTree()
-      if (!(tree instanceof HTMLElement)) {
+      const workspace = workspaceRoot()
+      if (workspace !== resizeTarget && resizeObserver) {
+        if (resizeTarget) resizeObserver.unobserve(resizeTarget)
+        resizeTarget = workspace instanceof HTMLElement ? workspace : null
+        if (resizeTarget) resizeObserver.observe(resizeTarget)
+      }
+      if (!(workspace instanceof HTMLElement)) {
         menuEl?.remove()
         return
       }
       if (menuEl !== null) {
-        // 菜单不能作为 React 侧边栏的子节点；新版 DSH 会在重绘时移除它，
-        // 与 MutationObserver 互相触发，最终阻塞客户端插件装配。
+        // 保持菜单在 React 树外，自愈时只更新几何位置。
         if (document.body.contains(menuEl)) {
-          positionMenu(tree)
+          positionMenu(workspace)
           return
         }
         menuEl.remove()
@@ -530,43 +534,39 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
       menuEl.addEventListener('click', () => toggleList())
       if (listOpen) menuEl.setAttribute('data-active', 'true')
       document.body.append(menuEl)
-      positionMenu(tree)
+      positionMenu(workspace)
     }
 
     /**
-     * 菜单脱离 React 树后仍贴在会话树上方；布局变化由 ResizeObserver 与
-     * 自愈扫描驱动，避免直接改写 React 管理的 DOM。
+     * 使用包含标题的工作区容器定位，不能用标题下方的会话树反推位置。
+     * 找不到稳定插槽时不显示菜单，避免猜测位置遮挡宿主操作。
      */
-    function positionMenu(tree = sidebarTree()) {
-      if (menuEl === null || !(tree instanceof HTMLElement)) return
-      const rect = tree.getBoundingClientRect()
-      if (rect.width <= 0 || rect.height <= 0) {
+    function positionMenu(workspace = workspaceRoot()) {
+      if (menuEl === null || !(workspace instanceof HTMLElement)) return
+      const rect = workspace.getBoundingClientRect()
+      if (frameEl()?.getAttribute('data-sidebar-collapsed') === 'true' || rect.width < 120 || rect.height <= 0) {
         menuEl.style.display = 'none'
+        if (listOpen) closeList()
         return
       }
-      const height = menuEl.getBoundingClientRect().height || 30
       menuEl.style.display = 'flex'
       menuEl.style.left = `${Math.round(rect.left)}px`
-      menuEl.style.top = `${Math.max(8, Math.round(rect.top - height - 4))}px`
-      menuEl.style.width = `${Math.round(rect.width)}px`
+      menuEl.style.top = `${Math.round(rect.top)}px`
+      menuEl.style.width = `${Math.round(rect.width - 12)}px`
     }
 
-    /**
-     * The sidebar workspace/session tree (stable structural hook). The session
-     * list is the FIRST [role=tree] inside the app frame — DOM order is stable
-     * even when a search-results tree mounts later, so we never follow it.
-     */
-    function sidebarTree() {
-      const frame = frameEl()
-      const scope = frame instanceof HTMLElement ? frame : document
-      return scope.querySelector('[role="tree"]')
+    function workspaceRoot() {
+      return document.querySelector('[data-slot="sidebar.workspaces"]')?.firstElementChild
     }
 
     /** Refresh the sidebar menu row badge (site count). */
     function refreshMenu() {
       if (menuEl === null) return
       const count = $('.dws-menu-count', menuEl)
-      if (count) count.textContent = `${sites.length}`
+      // 相同 textContent 赋值也会替换文本节点，触发 childList 监听。
+      // 自愈扫描必须幂等，否则 sweep → refreshMenu → observer 会无限循环。
+      const nextCount = `${sites.length}`
+      if (count && count.textContent !== nextCount) count.textContent = nextCount
     }
 
     // ---------------------------------------------------------------- list
@@ -677,6 +677,13 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
     // ---------------------------------------------------------------- panel
     function openSite(site) {
       closeList()
+      // embed: false 的站点直接新标签打开，避开 iframe 第三方 Cookie 拦截
+      if (site.embed === false) {
+        panelOpenId = null
+        try { localStorage.removeItem(LS_OPEN_KEY) } catch { /* ignore */ }
+        window.open(site.url, '_blank', 'noopener')
+        return
+      }
       panelOpenId = site.id
       try { localStorage.setItem(LS_OPEN_KEY, site.id) } catch { /* ignore */ }
       renderPanel(site)
@@ -985,7 +992,7 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
           const saved = localStorage.getItem(LS_OPEN_KEY)
           if (saved) {
             const site = siteById.get(saved)
-            if (site) openSite(site)
+            if (site && site.embed !== false) openSite(site)
           }
         } catch { /* ignore */ }
       }
@@ -1012,6 +1019,7 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
       observer = null
       resizeObserver?.disconnect()
       resizeObserver = null
+      resizeTarget = null
       closeList()
       closePanel()
       closeManage()
@@ -1030,13 +1038,13 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
         ctx = clientCtx
         mounted = true
         ensureStyles()
+        resizeObserver = new ResizeObserver(() => { sweep() })
         ensureMenu()
 
         // self-heal: re-inject menu + re-anchor on shell re-render / resize
         observer = new MutationObserver(() => { sweep() })
         observer.observe(document.body, { childList: true, subtree: true })
 
-        resizeObserver = new ResizeObserver(() => { sweep() })
         const frame = frameEl()
         if (frame) resizeObserver.observe(frame)
 

@@ -76,10 +76,21 @@ sites:
 
 ## 原理
 
-- **host 半边**（`lib/index.js`）注册两个回环信任围栏保护的路由：
+- **host 半边**（`lib/index.js`）注册回环信任围栏保护的路由：
   - `GET  /api/dsh-sites/list` —— 读配置返回 `{ sites: [...] }`；
-  - `POST /api/dsh-sites/save` —— 全量写回（原子写：tmp + rename）。
+  - `POST /api/dsh-sites/save` —— 全量写回（原子写：tmp + rename，GUI 管理弹窗用）；
+  - `POST /api/dsh-sites/add` —— 单条新增 `{ name, url, icon?, tags?, id? }`
+    （幂等：同 id 或同 url 已存在则视为更新）；
+  - `POST /api/dsh-sites/update` —— 单条修改 `{ id, name?, url?, icon?, tags? }`
+    （id 可传站点当前 name）；
+  - `POST /api/dsh-sites/remove` —— 单条删除 `{ id }`；
+  - `POST /api/dsh-sites/reorder` —— 重排 `{ ids: [id, ...] }`，未列出的站点追加在末尾。
+  - 站点字段 `embed: false`（add / update / save 均可设置）：该站点不走 iframe
+    内嵌（iframe 里的第三方 Cookie 会被浏览器拦截，影响登录），点击直接新标签打开。
   - yaml 解析/序列化从 DSH 依赖树解析，插件自身零依赖。
+- **对话式管理**：细粒度 CRUD 路由供 AI 会话直接 `curl` 单条增删改，不必拉全量
+  再写回。配套 skill 在 `~/.claude/skills/web-sites/`，对 AI 说
+  「把 XX 加进我的网站系统」即可触发。
 - **client 半边**（`lib/client.js`）纯 DOM 注入：
   - **侧边栏菜单行**作为 `[role="tree"]`（工作区/会话树）的兄弟节点插入其前方
     （即新会话按钮下方、工作区上方），不进入 React 管理的树内部；

@@ -1,10 +1,20 @@
 /**
  * dsh-web-sites — host half (runs inside the dsh CLI process).
  *
- * Serves the site-launcher config over two loopback-trusted routes:
+ * Serves the site-launcher config over loopback-trusted routes:
  *
- *   GET  /api/dsh-sites/list  -> { sites: Site[] }
- *   POST /api/dsh-sites/save  -> body { sites: Site[] }  (full-list atomic write)
+ *   GET  /api/dsh-sites/list   -> { sites: Site[] }
+ *   POST /api/dsh-sites/save   -> body { sites: Site[] }   (full-list atomic write)
+ *   POST /api/dsh-sites/add    -> body { name, url, icon?, tags?, id? }
+ *   POST /api/dsh-sites/update -> body { id, name?, url?, icon?, tags? }
+ *   POST /api/dsh-sites/remove -> body { id }
+ *   POST /api/dsh-sites/reorder-> body { ids: string[] }    (list order by ids)
+ *
+ * Site 额外字段 embed: false —— 不走 iframe 内嵌（避开第三方 Cookie 拦截），
+ * 点击站点直接新标签打开。
+ *
+ * 细粒度路由面向「对话式管理」：AI 会话可直接 curl 单条增删改，不必拉全量
+ * 再写回，避免覆盖并发修改。
  *
  * The config file lives at ~/.dsh/sites.yaml:
  *
@@ -75,6 +85,8 @@ function normaliseSites(raw) {
       url,
       icon: String(item.icon ?? '').trim() || '🌐',
       tags: Array.isArray(item.tags) ? item.tags.map(String) : [],
+      // embed: false 表示该站点不走 iframe 内嵌，点击直接新标签打开
+      embed: item.embed === false ? false : true,
     })
   }
   return out
@@ -108,6 +120,20 @@ export function writeSites(sites, path = sitesPath()) {
   return list
 }
 
+/** 读盘 + 变更 + 原子写回的公共通道；mutate 抛错即整条拒绝，不落盘。 */
+function mutateSites(mutate) {
+  const sites = readSites()
+  const next = mutate(sites)
+  return writeSites(next)
+}
+
+/** 按 id 或 name 精确查找站点下标；找不到返回 -1。 */
+function findIndex(sites, ref) {
+  const key = String(ref ?? '').trim()
+  if (!key) return -1
+  return sites.findIndex(s => s.id === key || s.name === key)
+}
+
 // -------------------------------------------------------------------- apply
 
 export function apply(ctx) {
@@ -115,6 +141,34 @@ export function apply(ctx) {
     const reply = (res, code, data) => {
       res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' })
       res.end(JSON.stringify(data))
+    }
+
+    const readBody = req => new Promise((resolve, reject) => {
+      let body = ''
+      req.on('data', chunk => { body += chunk })
+      req.on('end', () => resolve(body))
+      req.on('error', reject)
+    })
+
+    /** POST 路由公共壳：围栏 + 方法 + JSON 解析。handler 返回 {status, data}
+     *  或直接返回业务对象（视为 200 + {ok:true, ...result}）。 */
+    const post = (handler) => (req, res) => {
+      if (!trusted(req)) return reply(res, 403, { error: '仅允许本机同源请求' })
+      if (req.method !== 'POST') return reply(res, 405, { error: '不支持的请求方法' })
+      readBody(req).then(body => {
+        try {
+          const parsed = JSON.parse(body || '{}')
+          const result = handler(parsed)
+          if (result && typeof result === 'object' && 'status' in result) {
+            return reply(res, result.status, result.data)
+          }
+          // 业务 handler 直接返回 Site[]（writeSites 的产物）→ {ok, sites}
+          const data = Array.isArray(result) ? { sites: result } : result
+          reply(res, 200, { ok: true, ...data })
+        } catch (error) {
+          reply(res, 400, { ok: false, error: error.message })
+        }
+      }, () => reply(res, 400, { ok: false, error: '请求体读取失败' }))
     }
 
     const disposers = [
@@ -131,9 +185,7 @@ export function apply(ctx) {
         handler(req, res) {
           if (!trusted(req)) return reply(res, 403, { error: '仅允许本机同源请求' })
           if (req.method !== 'POST') return reply(res, 405, { error: '不支持的请求方法' })
-          let body = ''
-          req.on('data', chunk => { body += chunk })
-          req.on('end', () => {
+          readBody(req).then(body => {
             try {
               const parsed = JSON.parse(body || '{}')
               const sites = writeSites(parsed.sites ?? [])
@@ -141,8 +193,77 @@ export function apply(ctx) {
             } catch (error) {
               reply(res, 400, { ok: false, error: error.message })
             }
-          })
+          }, () => reply(res, 400, { ok: false, error: '请求体读取失败' }))
         },
+      }),
+      ctx.webServer.register({
+        kind: 'exact', path: '/api/dsh-sites/add',
+        handler: post(parsed => {
+          const name = String(parsed.name ?? '').trim()
+          const url = String(parsed.url ?? '').trim()
+          if (!name || !url) throw new Error('name 与 url 必填')
+          return mutateSites(sites => {
+            // 幂等：同 id 或同 url 已存在则视为更新（对话重试安全）。
+            const idx = sites.findIndex(s => s.id === (String(parsed.id ?? '').trim() || slugify(name)) || s.url === url)
+            const entry = {
+              id: String(parsed.id ?? '').trim() || (idx >= 0 ? sites[idx].id : slugify(name)),
+              name, url,
+              icon: String(parsed.icon ?? '').trim() || (idx >= 0 ? sites[idx].icon : '🌐'),
+              tags: Array.isArray(parsed.tags) ? parsed.tags.map(String) : (idx >= 0 ? sites[idx].tags : []),
+              embed: parsed.embed !== undefined ? parsed.embed !== false : (idx >= 0 ? sites[idx].embed : true),
+            }
+            if (idx >= 0) { sites[idx] = entry; return sites }
+            return [...sites, entry]
+          })
+        }),
+      }),
+      ctx.webServer.register({
+        kind: 'exact', path: '/api/dsh-sites/update',
+        handler: post(parsed => {
+          const ref = parsed.id ?? parsed.name
+          return mutateSites(sites => {
+            const idx = findIndex(sites, ref)
+            if (idx < 0) throw new Error(`未找到站点：${ref}`)
+            const cur = sites[idx]
+            const next = {
+              ...cur,
+              name: String(parsed.name ?? cur.name).trim() || cur.name,
+              url: String(parsed.url ?? cur.url).trim() || cur.url,
+              icon: parsed.icon !== undefined ? (String(parsed.icon).trim() || cur.icon) : cur.icon,
+              tags: Array.isArray(parsed.tags) ? parsed.tags.map(String) : cur.tags,
+              embed: parsed.embed !== undefined ? parsed.embed !== false : cur.embed,
+            }
+            // name 变了且 id 是自动生成的，跟随更新；显式 id 不动。
+            if (parsed.name && parsed.id === undefined && cur.id === slugify(cur.name)) next.id = slugify(next.name)
+            const out = [...sites]; out[idx] = next
+            return out
+          })
+        }),
+      }),
+      ctx.webServer.register({
+        kind: 'exact', path: '/api/dsh-sites/remove',
+        handler: post(parsed => {
+          const ref = parsed.id ?? parsed.name
+          return mutateSites(sites => {
+            const idx = findIndex(sites, ref)
+            if (idx < 0) throw new Error(`未找到站点：${ref}`)
+            const out = [...sites]; out.splice(idx, 1)
+            return out
+          })
+        }),
+      }),
+      ctx.webServer.register({
+        kind: 'exact', path: '/api/dsh-sites/reorder',
+        handler: post(parsed => {
+          const ids = Array.isArray(parsed.ids) ? parsed.ids.map(String) : null
+          if (!ids || ids.length === 0) throw new Error('ids 必须为非空数组')
+          return mutateSites(sites => {
+            const byId = new Map(sites.map(s => [s.id, s]))
+            const ordered = ids.map(id => byId.get(id)).filter(Boolean)
+            const rest = sites.filter(s => !ids.includes(s.id))
+            return [...ordered, ...rest]
+          })
+        }),
       }),
     ]
     return () => { for (const dispose of disposers) dispose() }

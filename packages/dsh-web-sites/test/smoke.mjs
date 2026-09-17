@@ -9,9 +9,12 @@
  *      malformed entries dropped
  *   3. `writeSites` — normalises + round-trips through readSites; invalid
  *      entries dropped; empty name/url dropped; chinese names slugified
- *   4. route registration — apply registers /api/dsh-sites/list + /save
+ *   4. route registration — apply registers list / save / add / update /
+ *      remove / reorder
  *   5. route guards — non-loopback 403, wrong method 405
  *   6. /save handler — persists a posted full list and returns {ok, sites}
+ *   7. CRUD handlers — add (idempotent by url/id), update by id-or-name,
+ *      remove, reorder; unknown refs -> 400
  *
  * Run: node test/smoke.mjs
  */
@@ -20,6 +23,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { apply, trusted, readSites, writeSites } from '../lib/index.js'
+import './client-smoke.mjs'
 
 // -------------------------------------------------------- client isolation
 // 菜单必须留在 React 侧边栏树外，否则新版 DSH 的重绘会与自愈监听形成循环。
@@ -70,6 +74,8 @@ async function callHandler(handler, { method = 'GET', body = null, rawBody = nul
     },
   }
   await handler(req, res)
+  // CRUD 壳经 Promise 解析后异步回包，放一次事件循环让 res.end 落地。
+  await new Promise(resolve => setImmediate(resolve))
   return { status, payload }
 }
 
@@ -110,7 +116,7 @@ assert.equal(trusted(request('127.0.0.1', { origin: 'http://localhost:3000' })),
     const sites = readSites(file)
     assert.equal(sites.length, 2)
     assert.deepEqual(sites[0], {
-      id: 'contract', name: '合同管理系统', url: 'http://localhost:8080', icon: '📄', tags: ['办公'],
+      id: 'contract', name: '合同管理系统', url: 'http://localhost:8080', icon: '📄', tags: ['办公'], embed: true,
     })
     // 无 id 时由 name 生成 slug（中文保留）
     assert.equal(sites[1].id, '知识平台')
@@ -132,7 +138,7 @@ assert.equal(trusted(request('127.0.0.1', { origin: 'http://localhost:3000' })),
       'garbage',                                     // dropped
     ], file)
     assert.equal(written.length, 1)
-    assert.deepEqual(written[0], { id: 'a', name: '站点A', url: 'http://a.local', icon: '🅰', tags: ['x'] })
+    assert.deepEqual(written[0], { id: 'a', name: '站点A', url: 'http://a.local', icon: '🅰', tags: ['x'], embed: true })
 
     // round-trip: 写回后再读应一致
     assert.deepEqual(readSites(file), written)
@@ -209,6 +215,65 @@ assert.equal(trusted(request('127.0.0.1', { origin: 'http://localhost:3000' })),
     // 非法 body：400
     const bad = await callHandler(save.handler, { method: 'POST', rawBody: '{not-json!!' })
     assert.equal(bad.status, 400)
+
+    // ---------------------------------------------- CRUD routes (对话式管理)
+    const add = routes['/api/dsh-sites/add']
+    const update = routes['/api/dsh-sites/update']
+    const remove = routes['/api/dsh-sites/remove']
+    const reorder = routes['/api/dsh-sites/reorder']
+    for (const route of [add, update, remove, reorder]) {
+      assert.equal((await callHandler(route.handler, { method: 'GET' })).status, 405)
+      assert.equal((await callHandler(route.handler, { method: 'POST', address: '10.0.0.1' })).status, 403)
+    }
+
+    // add：缺字段 400；合法则落盘
+    assert.equal((await callHandler(add.handler, { method: 'POST', body: { name: '只有名字' } })).status, 400)
+    const added = await callHandler(add.handler, {
+      method: 'POST',
+      body: { name: '监控台', url: 'http://localhost:9090', icon: '📈', tags: ['运维'] },
+    })
+    assert.equal(added.status, 200)
+    assert.equal(added.payload.sites.length, 2)
+    const addedId = added.payload.sites[1].id
+    assert.equal(addedId, '监控台') // 中文 slug 保留
+
+    // add 幂等：同 url 重复添加 → 更新而非重复
+    const again = await callHandler(add.handler, {
+      method: 'POST', body: { name: '监控台二', url: 'http://localhost:9090' },
+    })
+    assert.equal(again.payload.sites.length, 2)
+    assert.equal(again.payload.sites[1].name, '监控台二')
+    assert.equal(again.payload.sites[1].id, addedId) // id 沿用旧条目
+
+    // update：按 id 改 url；按不存在的 ref 报 400
+    const upd = await callHandler(update.handler, {
+      method: 'POST', body: { id: addedId, url: 'http://127.0.0.1:9090' },
+    })
+    assert.equal(upd.status, 200)
+    assert.equal(upd.payload.sites[1].url, 'http://127.0.0.1:9090')
+    assert.equal(upd.payload.sites[1].name, '监控台二') // 未改字段保持
+    const updMiss = await callHandler(update.handler, { method: 'POST', body: { id: 'nope' } })
+    assert.equal(updMiss.status, 400)
+    // update 支持 embed:false（新标签打开，避开 iframe Cookie 拦截）
+    const updEmbed = await callHandler(update.handler, {
+      method: 'POST', body: { id: addedId, embed: false },
+    })
+    assert.equal(updEmbed.status, 200)
+    assert.equal(updEmbed.payload.sites[1].embed, false)
+    const updEmbedBack = await callHandler(update.handler, {
+      method: 'POST', body: { id: addedId, embed: true },
+    })
+    assert.equal(updEmbedBack.payload.sites[1].embed, true)
+
+    // remove + reorder（注意 slugify 会转小写：站点B -> 站点b）
+    await callHandler(add.handler, { method: 'POST', body: { name: '站点B', url: 'http://b.local' } })
+    const moved = await callHandler(reorder.handler, {
+      method: 'POST', body: { ids: ['站点b', addedId, 'a'] },
+    })
+    assert.equal(moved.payload.sites[0].id, '站点b')
+    const removed = await callHandler(remove.handler, { method: 'POST', body: { id: '站点b' } })
+    assert.equal(removed.payload.sites.length, 2)
+    assert.equal((await callHandler(remove.handler, { method: 'POST', body: { id: '站点b' } })).status, 400)
   } finally {
     if (prev === undefined) delete process.env.DSH_WEB_SITES_CONFIG
     else process.env.DSH_WEB_SITES_CONFIG = prev

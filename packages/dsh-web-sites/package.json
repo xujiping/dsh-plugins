@@ -1,6 +1,6 @@
 {
   "name": "dsh-web-sites",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "DSH Web 集中管理自己的网站系统：侧边栏「新会话」下方注入「🌐 我的网站系统」菜单，点击展开站点列表，点击站点在主面板区域以 iframe 面板打开（刷新/新标签/管理/关闭）；打开网站时点左侧会话即收起面板。配置存 ~/.dsh/sites.yaml，支持界面增删改。纯 DOM 注入 + host 路由，不改 DSH 源码。",
   "keywords": [
     "deepseek",
