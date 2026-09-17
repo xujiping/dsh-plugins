@@ -75,7 +75,11 @@ assert.ok(balanceRoute, 'balance route registered')
   assert.equal(status, 200)
   assert.ok(Array.isArray(body.providers), 'providers list returned')
   for (const p of body.providers) {
-    assert.ok(p.id && typeof p.text === 'string', 'provider row shape')
+    assert.ok(p.id && typeof p.displayName === 'string', 'provider identity shape')
+    assert.ok(
+      typeof p.text === 'string' || Array.isArray(p.segments),
+      'provider balance or quota shape',
+    )
     assert.ok(!('apiKey' in p) && !('key' in p), 'no credential leak')
   }
 }
