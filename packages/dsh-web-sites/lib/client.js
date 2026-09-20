@@ -6,8 +6,10 @@
  *   - 菜单「🌐 我的网站系统」挂在 body，锚定 sidebar.workspaces 插槽。
  *     工作区容器通过 CSS 预留菜单高度，位于新会话下方、工作区标题上方；
  *     不插入 React 管理的子节点，MutationObserver 负责幂等自愈。
- *   - Clicking the menu drops a site list anchored right below it
- *     (position:fixed on document.body, sidebar-wide).
+ *   - Clicking the menu drops a floating site list anchored right below it
+ *     (position:fixed on document.body, aligned to the menu edges). The list
+ *     has a quick-search box, keyboard navigation (↑/↓/Enter/Esc), a hover
+ *     "↗" per row to open in a new tab, and dismisses on outside click / Esc.
  *   - Clicking a site opens a full-height iframe PANEL on the RIGHT side
  *     of the app frame (from the sidebar's right edge to the viewport /
  *     rightbar edge). The panel has a header bar: 刷新 / 新标签打开 / 管理 /
@@ -59,6 +61,7 @@ window.__ModuleLoader__.load({
     let listOpen = false
     let panelOpenId = null
     let manageOpen = false
+    let listQuery = ''
 
     // ---------------------------------------------------------------- helpers
     function $(sel, root) {
@@ -160,28 +163,28 @@ body:has([data-sidebar-collapsed="true"]) .dws-list {
 .dws-menu-caret { flex: 0 0 auto; font-size: 10px; transition: transform .12s ease; }
 .dws-menu[data-active="true"] .dws-menu-caret { transform: rotate(90deg); }
 
-/* ---- expanded site list: dropdown anchored below the sidebar menu row ---- */
+/* ---- site list: floating panel anchored below the sidebar menu row ---- */
 .dws-list {
   position: fixed;
-  left: 0;
   z-index: 49;
-  max-height: 60vh;
+  max-height: 70vh;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
   background: var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-base, #fff));
-  border-right: .5px solid var(--dsw-alias-border-l3);
-  border-bottom: .5px solid var(--dsw-alias-border-l3);
-  box-shadow: var(--dsw-shadow-lv3, 0 8px 28px rgba(0,0,0,0.14));
-  border-radius: 0 0 12px 0;
-  animation: dws-list-in .14s var(--ds-ease-in-out, ease);
+  border: 1px solid var(--dsw-alias-border-l2, rgba(0,0,0,0.10));
+  border-radius: 12px;
+  box-shadow: var(--dsw-shadow-lv3, 0 12px 32px rgba(0,0,0,0.16));
+  transform-origin: top left;
+  animation: dws-list-in .16s cubic-bezier(0.2, 0.8, 0.4, 1);
   overflow: hidden;
 }
 @keyframes dws-list-in {
-  from { opacity: 0; transform: translateX(-6px); }
-  to   { opacity: 1; transform: translateX(0); }
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 .dws-list-head {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -192,18 +195,79 @@ body:has([data-sidebar-collapsed="true"]) .dws-list {
   color: var(--dsw-alias-label-primary, #1a1a1a);
 }
 .dws-list-head-note {
+  flex: 0 0 auto;
   font-size: 10px;
   font-weight: 400;
+  line-height: 16px;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: var(--dsw-alias-label-secondary, #666);
+  background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,0.06));
+}
+.dws-search {
+  flex: 0 0 auto;
+  position: relative;
+  padding: 0 12px 8px;
+}
+.dws-search-input {
+  all: unset;
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l3, rgba(0,0,0,0.14));
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary, #1a1a1a);
+  background: var(--dsw-alias-bg-layer-2, rgba(0,0,0,0.03));
+  transition: border-color .12s ease, background-color .12s ease;
+}
+.dws-search-input::placeholder { color: var(--dsw-alias-label-tertiary, #999); }
+.dws-search-input:hover { border-color: var(--dsw-alias-border-l2, rgba(0,0,0,0.20)); }
+.dws-search-input:focus {
+  border-color: var(--dsw-alias-button-info-fill, #4d6bfe);
+  background: var(--dsw-alias-bg-base, #fff);
+}
+.dws-search-clear {
+  all: unset;
+  position: absolute;
+  top: 15px;
+  right: 20px;
+  transform: translateY(-50%);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
   color: var(--dsw-alias-label-tertiary, #999);
+  background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,0.08));
+}
+.dws-search[data-filled="true"] .dws-search-clear { display: inline-flex; }
+.dws-search-clear:hover { color: var(--dsw-alias-label-primary, #1a1a1a); }
+.dws-search-clear:focus-visible {
+  outline: 2px solid var(--dsw-alias-button-info-fill, #4d6bfe);
 }
 .dws-list-body {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: 4px 8px 8px;
+  padding: 0 8px 8px;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--dsw-alias-border-l3, rgba(0,0,0,0.15)) transparent;
 }
+.dws-list-body::-webkit-scrollbar { width: 6px; }
+.dws-list-body::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: var(--dsw-alias-border-l3, rgba(0,0,0,0.15));
+}
+.dws-list-body::-webkit-scrollbar-track { background: transparent; }
 .dws-site {
   all: unset;
   box-sizing: border-box;
@@ -211,24 +275,38 @@ body:has([data-sidebar-collapsed="true"]) .dws-list {
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 7px 8px 7px 10px;
   border-radius: 8px;
   cursor: pointer;
   color: var(--dsw-alias-label-primary, #1a1a1a);
+  transition: background-color .12s ease;
 }
-.dws-site:hover {
+.dws-site:hover,
+.dws-site:focus-visible {
   background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,0.06));
+}
+.dws-site:active {
+  background: var(--dsw-alias-interactive-bg-active, rgba(0,0,0,0.10));
 }
 .dws-site:focus-visible {
   outline: 2px solid var(--dsw-alias-button-info-fill, #4d6bfe);
   outline-offset: -2px;
 }
+.dws-site[data-current="true"] {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,0.06));
+  box-shadow: inset 2px 0 0 var(--dsw-alias-button-info-fill, #4d6bfe);
+}
 .dws-site-icon {
   flex: 0 0 auto;
-  width: 24px;
-  text-align: center;
-  font-size: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  font-size: 15px;
   line-height: 1;
+  background: var(--dsw-alias-bg-layer-2, rgba(0,0,0,0.05));
 }
 .dws-site-meta { flex: 1 1 auto; min-width: 0; }
 .dws-site-name {
@@ -239,19 +317,53 @@ body:has([data-sidebar-collapsed="true"]) .dws-list {
   white-space: nowrap;
 }
 .dws-site-url {
-  font-size: 10px;
-  line-height: 14px;
+  font-size: 11px;
+  line-height: 15px;
   color: var(--dsw-alias-label-tertiary, #999);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.dws-site-tab {
+  all: unset;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--dsw-alias-label-tertiary, #999);
+  opacity: 0;
+  transition: opacity .12s ease, color .12s ease, background-color .12s ease;
+}
+.dws-site:hover .dws-site-tab,
+.dws-site:focus-within .dws-site-tab,
+.dws-site-tab:focus-visible { opacity: 1; }
+.dws-site-tab:hover {
+  color: var(--dsw-alias-label-primary, #1a1a1a);
+  background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,0.10));
+}
+.dws-site-tab:focus-visible {
+  outline: 2px solid var(--dsw-alias-button-info-fill, #4d6bfe);
+}
 .dws-list-empty {
-  padding: 24px 12px;
+  flex: 0 0 auto;
+  padding: 20px 12px;
   text-align: center;
   font-size: 12px;
   line-height: 20px;
+  white-space: pre-line;
   color: var(--dsw-alias-label-tertiary, #999);
+}
+.dws-list-empty .dws-btn { margin-top: 10px; }
+@media (prefers-reduced-motion: reduce) {
+  .dws-list { animation: none; }
+  .dws-site, .dws-site-tab, .dws-search-input { transition: none; }
 }
 .dws-list-foot {
   padding: 8px;
@@ -570,38 +682,104 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
     }
 
     // ---------------------------------------------------------------- list
+    function siteMatches(site, query) {
+      if (query === '') return true
+      const q = query.toLowerCase()
+      if (site.name.toLowerCase().includes(q) || site.url.toLowerCase().includes(q)) return true
+      return Array.isArray(site.tags) && site.tags.some(tag => String(tag).toLowerCase().includes(q))
+    }
+
+    /** 在新标签打开；列表保持展开，方便连续打开多个站点。 */
+    function openSiteExternal(site) {
+      window.open(site.url, '_blank', 'noopener')
+    }
+
+    function siteRow(site) {
+      const row = document.createElement('div')
+      row.className = 'dws-site'
+      row.setAttribute('role', 'button')
+      row.tabIndex = 0
+      if (site.id === panelOpenId) row.dataset.current = 'true'
+      row.title = `${site.name} · ${site.url}\n点击打开；Ctrl/⌘+点击或 ↗ 在新标签打开`
+      const icon = document.createElement('span')
+      icon.className = 'dws-site-icon'
+      icon.textContent = site.icon || '🌐'
+      const meta = document.createElement('span')
+      meta.className = 'dws-site-meta'
+      const name = document.createElement('div')
+      name.className = 'dws-site-name'
+      name.textContent = site.name
+      const url = document.createElement('div')
+      url.className = 'dws-site-url'
+      url.textContent = site.url
+      meta.append(name, url)
+      const tab = document.createElement('button')
+      tab.type = 'button'
+      tab.className = 'dws-site-tab'
+      tab.textContent = '↗'
+      tab.title = '在新标签页打开'
+      tab.setAttribute('aria-label', `在新标签页打开 ${site.name}`)
+      tab.addEventListener('click', event => {
+        event.stopPropagation()
+        openSiteExternal(site)
+      })
+      row.addEventListener('click', event => {
+        if (event.metaKey || event.ctrlKey) {
+          openSiteExternal(site)
+          return
+        }
+        openSite(site)
+      })
+      row.addEventListener('auxclick', event => {
+        if (event.button === 1) {
+          event.preventDefault()
+          openSiteExternal(site)
+        }
+      })
+      row.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          openSite(site)
+        }
+      })
+      row.append(icon, meta, tab)
+      return row
+    }
+
     function renderList() {
       if (!listEl) return
       const body = $('.dws-list-body', listEl)
+      const note = $('.dws-list-head-note', listEl)
       body.replaceChildren()
       if (sites.length === 0) {
+        if (note) note.textContent = '0 个'
         const empty = document.createElement('div')
         empty.className = 'dws-list-empty'
-        empty.textContent = '还没有配置站点\n点下方「管理」添加，或编辑 ~/.dsh/sites.yaml'
+        empty.textContent = '还没有配置站点\n编辑 ~/.dsh/sites.yaml，或点下方按钮添加'
+        const addBtn = document.createElement('button')
+        addBtn.type = 'button'
+        addBtn.className = 'dws-btn'
+        addBtn.textContent = '＋ 添加第一个站点'
+        addBtn.addEventListener('click', () => {
+          closeList()
+          openManage()
+        })
+        empty.append(addBtn)
         body.append(empty)
         return
       }
-      for (const site of sites) {
-        const row = document.createElement('button')
-        row.type = 'button'
-        row.className = 'dws-site'
-        row.title = `${site.name}\n${site.url}`
-        const icon = document.createElement('span')
-        icon.className = 'dws-site-icon'
-        icon.textContent = site.icon || '🌐'
-        const meta = document.createElement('span')
-        meta.className = 'dws-site-meta'
-        const name = document.createElement('div')
-        name.className = 'dws-site-name'
-        name.textContent = site.name
-        const url = document.createElement('div')
-        url.className = 'dws-site-url'
-        url.textContent = site.url
-        meta.append(name, url)
-        row.append(icon, meta)
-        row.addEventListener('click', () => openSite(site))
-        body.append(row)
+      const visible = sites.filter(site => siteMatches(site, listQuery))
+      if (note) {
+        note.textContent = listQuery === '' ? `${sites.length} 个` : `${visible.length}/${sites.length}`
       }
+      if (visible.length === 0) {
+        const empty = document.createElement('div')
+        empty.className = 'dws-list-empty'
+        empty.textContent = `没有匹配「${listQuery}」的站点`
+        body.append(empty)
+        return
+      }
+      for (const site of visible) body.append(siteRow(site))
     }
 
     function openList() {
@@ -612,6 +790,8 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
         listEl = document.createElement('div')
         listEl.className = 'dws-list'
         listEl.setAttribute('data-plugin', 'dsh-web-sites')
+        listEl.setAttribute('role', 'dialog')
+        listEl.setAttribute('aria-label', '我的网站系统')
 
         const head = document.createElement('div')
         head.className = 'dws-list-head'
@@ -619,8 +799,23 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
         title.textContent = '🌐 我的网站系统'
         const note = document.createElement('span')
         note.className = 'dws-list-head-note'
-        note.textContent = `${sites.length} 个`
         head.append(title, note)
+
+        const search = document.createElement('div')
+        search.className = 'dws-search'
+        const input = document.createElement('input')
+        input.type = 'text'
+        input.className = 'dws-search-input'
+        input.placeholder = '搜索站点…'
+        input.setAttribute('aria-label', '搜索站点')
+        input.spellcheck = false
+        const clearBtn = document.createElement('button')
+        clearBtn.type = 'button'
+        clearBtn.className = 'dws-search-clear'
+        clearBtn.textContent = '✕'
+        clearBtn.title = '清除搜索'
+        clearBtn.setAttribute('aria-label', '清除搜索')
+        search.append(input, clearBtn)
 
         const body = document.createElement('div')
         body.className = 'dws-list-body'
@@ -638,19 +833,50 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
         })
         foot.append(manageBtn)
 
-        listEl.append(head, body, foot)
+        listEl.append(head, search, body, foot)
         document.body.append(listEl)
         resizeObserver?.observe(listEl)
+
+        input.addEventListener('input', () => {
+          listQuery = input.value
+          search.dataset.filled = listQuery === '' ? 'false' : 'true'
+          renderList()
+        })
+        clearBtn.addEventListener('click', () => {
+          input.value = ''
+          listQuery = ''
+          search.dataset.filled = 'false'
+          renderList()
+          input.focus({ preventScroll: true })
+        })
+        listEl.addEventListener('keydown', onListKeydown)
+      } else {
+        // 兜底：重复 openList 时重置上一次的搜索词
+        const staleInput = $('.dws-search-input', listEl)
+        const staleSearch = $('.dws-search', listEl)
+        listQuery = ''
+        if (staleInput) staleInput.value = ''
+        if (staleSearch) staleSearch.dataset.filled = 'false'
       }
       renderList()
       positionList()
+      const input = $('.dws-search-input', listEl)
+      if (input && typeof input.focus === 'function') input.focus({ preventScroll: true })
     }
 
     function closeList() {
+      if (!listOpen && listEl === null) return
       listOpen = false
       menuEl?.removeAttribute('data-active')
+      const hadFocus = listEl !== null
+        && document.activeElement instanceof Element
+        && listEl.contains(document.activeElement)
       listEl?.remove()
       listEl = null
+      listQuery = ''
+      if (hadFocus && menuEl && typeof menuEl.focus === 'function') {
+        menuEl.focus({ preventScroll: true })
+      }
     }
 
     function toggleList() {
@@ -658,20 +884,75 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
       else openList()
     }
 
-    /** Anchor the dropdown right below the sidebar menu row, sidebar-wide. */
+    /** 列表内键盘导航：↑/↓ 在搜索框与站点行间循环，Enter 打开首个匹配。 */
+    function onListKeydown(event) {
+      if (!listOpen || !listEl) return
+      const active = document.activeElement
+      const input = $('.dws-search-input', listEl)
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        if (active === input && listQuery !== '') {
+          input.value = ''
+          listQuery = ''
+          const search = $('.dws-search', listEl)
+          if (search) search.dataset.filled = 'false'
+          renderList()
+          return
+        }
+        closeList()
+        return
+      }
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Enter') return
+      const rows = typeof listEl.querySelectorAll === 'function'
+        ? Array.from(listEl.querySelectorAll('.dws-site'))
+        : []
+      if (event.key === 'Enter') {
+        if (active === input && rows.length > 0 && typeof rows[0].click === 'function') rows[0].click()
+        return
+      }
+      event.preventDefault()
+      if (rows.length === 0) return
+      const delta = event.key === 'ArrowDown' ? 1 : -1
+      const idx = rows.indexOf(active)
+      if (idx === -1) {
+        const target = delta === 1 ? rows[0] : rows[rows.length - 1]
+        if (typeof target.focus === 'function') target.focus({ preventScroll: true })
+        return
+      }
+      const next = idx + delta
+      if (next < 0 || next >= rows.length) {
+        if (input && typeof input.focus === 'function') input.focus({ preventScroll: true })
+        return
+      }
+      if (typeof rows[next].focus === 'function') rows[next].focus({ preventScroll: true })
+    }
+
+    /**
+     * Anchor the floating panel right below the sidebar menu row, aligned to
+     * the menu edges; clamp into the viewport and cap the max height.
+     */
     function positionList() {
       if (!listEl) return
-      const { sidebar } = layoutWidths()
-      const width = Math.max(180, sidebar)
+      let left = 0
+      let width = Math.max(220, layoutWidths().sidebar)
       let top = 120
       if (menuEl instanceof HTMLElement && menuEl.offsetHeight > 0) {
-        top = menuEl.getBoundingClientRect().bottom + 2
+        const rect = menuEl.getBoundingClientRect()
+        left = rect.left
+        width = Math.max(220, rect.width)
+        top = rect.bottom + 4
       }
       // clamp: never run past the viewport bottom
       const maxTop = Math.max(0, window.innerHeight - 80)
       if (top > maxTop) top = maxTop
-      listEl.style.width = `${width}px`
-      listEl.style.top = `${top}px`
+      const maxHeight = Math.min(
+        Math.max(160, window.innerHeight - top - 12),
+        Math.round(window.innerHeight * 0.7),
+      )
+      listEl.style.left = `${Math.round(left)}px`
+      listEl.style.width = `${Math.round(width)}px`
+      listEl.style.top = `${Math.round(top)}px`
+      listEl.style.maxHeight = `${maxHeight}px`
     }
 
     // ---------------------------------------------------------------- panel
@@ -766,6 +1047,8 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
       try { localStorage.removeItem(LS_OPEN_KEY) } catch { /* ignore */ }
       panelEl?.remove()
       panelEl = null
+      // 面板关闭后，若列表恰好展开则刷新「使用中」高亮
+      if (listOpen) renderList()
     }
 
     function positionPanel() {
@@ -834,6 +1117,10 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
       panel.append(head, body, foot)
       manageEl.append(panel)
       document.body.append(manageEl)
+      // 点遮罩空白处关闭（点在对话框内部不关）
+      manageEl.addEventListener('click', event => {
+        if (event.target === manageEl) closeManage()
+      })
 
       renderManageCards()
     }
@@ -999,22 +1286,37 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
     }
 
     /**
-     * Click-away wiring: when a site panel is open, clicking any sidebar
-     * workspace/session row ([role=treeitem]) dismisses the panel so the
-     * conversation shows through — the user asked for exactly this flow.
-     * Capture-phase delegation on document; ignores clicks inside our own UI.
+     * Click-away wiring (capture-phase delegation on document):
+     *   - clicking outside an open site list dismisses the list;
+     *   - when a site panel is open, clicking any sidebar workspace/session
+     *     row ([role=treeitem]) dismisses the panel so the conversation shows
+     *     through — the user asked for exactly this flow.
+     * Clicks inside our own UI ([data-plugin=dsh-web-sites]) are ignored.
      */
     function onDocumentClick(event) {
-      if (panelEl === null || panelOpenId === null) return
       const target = event.target
       if (!(target instanceof Element)) return
       if (target.closest('[data-plugin="dsh-web-sites"]')) return
-      const row = target.closest('[role="treeitem"]')
-      if (row instanceof Element) closePanel()
+      if (listOpen) closeList()
+      if (panelEl !== null && panelOpenId !== null) {
+        const row = target.closest('[role="treeitem"]')
+        if (row instanceof Element) closePanel()
+      }
+    }
+
+    /** Esc：优先关管理对话框，其次关站点列表（焦点在列表内时由列表自行处理）。 */
+    function onDocumentKeydown(event) {
+      if (event.key !== 'Escape') return
+      if (manageOpen) {
+        closeManage()
+        return
+      }
+      if (listOpen) closeList()
     }
 
     function dispose() {
       document.removeEventListener('click', onDocumentClick, true)
+      document.removeEventListener('keydown', onDocumentKeydown)
       observer?.disconnect()
       observer = null
       resizeObserver?.disconnect()
@@ -1050,6 +1352,8 @@ body[data-ds-dark-theme] .dws-panel-body { background: #1b1d23; }
 
         // clicking a sidebar session/workspace row collapses the open site panel
         document.addEventListener('click', onDocumentClick, true)
+        // Esc closes the manage dialog / site list
+        document.addEventListener('keydown', onDocumentKeydown)
 
         void reloadSites().then(() => { sweep() })
       } catch (error) {
