@@ -34,7 +34,7 @@
 
 ## 当前状态
 
-- 活跃插件（均装于对应 profile）：`dsh-agent-driver`（web，M0 验证中）、`dsh-chat-scroll-nav`（desktop）、`dsh-desktop-pet`（desktop + web）、`dsh-session-archive`（desktop + web）。
+- 活跃插件（均装于对应 profile）：`dsh-agent-driver`（web，M0 验证中）、`dsh-chat-scroll-nav`（desktop）、`dsh-desktop-pet`（desktop + web）、`dsh-session-archive`（desktop + web）、`dsh-web-sites`（web）、`dsh-own-plugin-manager`（web，自研插件管家：profile 插件全景/启停/版本更新监测，host 生效需重启 `dsh web`）。
 - 已删除（2026-09-16，功能被 agent-driver 取代 / 本地未安装，可从 git 历史恢复）：`dsh-new-session-route`（新会话下拉由 agent-driver 内置）、`dsh-llm-agent-bridge`、`dsh-agent-terminal`（旧外挂 agent CLI 方案）、`dsh-global-memory`（本地未安装，npm 已发布 @0.1.0）。
 
 ## 修改文件前置规则（强制）

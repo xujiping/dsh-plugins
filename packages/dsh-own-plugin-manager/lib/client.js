@@ -371,9 +371,11 @@ window.__ModuleLoader__.load({
       if (!slotRoot) return
       const rect = slotRoot.getBoundingClientRect()
       const sitesMenu = document.querySelector('.dws-menu')
+      // 注意：fixed 定位元素的 offsetParent 恒为 null，用盒尺寸判断可见性。
+      const sitesVisible = sitesMenu !== null && sitesMenu.getBoundingClientRect().height > 0
       let top = Math.round(rect.top)
       let reserved = 36
-      if (sitesMenu && sitesMenu.offsetParent !== null) {
+      if (sitesVisible) {
         const below = Math.round(sitesMenu.getBoundingClientRect().bottom) + 2
         if (below >= top - 4) { top = below; reserved = 70 }
       }
@@ -382,9 +384,9 @@ window.__ModuleLoader__.load({
       menuEl.style.width = `${Math.round(rect.width - 12)}px`
       // 插槽留白：web-sites 的 CSS 给 36px；双菜单共存时 inline 提到 70px。
       const current = slotRoot.style.paddingBlockStart
-      if (reserved === 70 ? current !== '70px' : current !== '' && current !== '36px') {
-        slotRoot.style.paddingBlockStart = reserved === 70 ? '70px' : ''
-      } else if (reserved === 36 && current === '70px' && !sitesMenu) {
+      if (reserved === 70 && current !== '70px') {
+        slotRoot.style.paddingBlockStart = '70px'
+      } else if (reserved === 36 && current === '70px') {
         slotRoot.style.paddingBlockStart = ''
       }
     }

@@ -75,7 +75,7 @@ export function parseSource(value) {
   if (gh) return { type: 'github', repo: gh[1].replace(/\.git$/, ''), ref: gh[2] || '', spec }
 
   if (/^[\^~><=]*\s*\d/.test(spec) || spec === '*' || spec === 'latest') {
-    const version = /^\d+(\.\d+){0,2}/.exec(spec)?.[0] || ''
+    const version = /^[\^~><=\s]*v?(\d+(?:\.\d+){0,2})/.exec(spec)?.[1] || ''
     return { type: 'npm', version, range: spec, spec }
   }
 
@@ -323,12 +323,28 @@ export async function checkGithub(repo, current, { fetchFn } = {}) {
   return result
 }
 
-/** GitHub release tarball 检测：releases/latest 的 tag 与已装版本比较。 */
-export async function checkTarball(repo, current, { fetchFn } = {}) {
+/**
+ * GitHub release tarball 检测：tag 与已装版本比较。
+ *
+ * monorepo（一个 repo 发多个插件包）的 releases 列表混着多个包的 tag
+ * （形如 `<pkg>@v0.3.20`），`releases/latest` 可能是别的包 —— 所以按
+ * `<pkg>@` 前缀过滤 releases 列表取目标包最新 tag；无匹配再退回 latest。
+ */
+export async function checkTarball(repo, current, { fetchFn, pkg = '' } = {}) {
   const result = { type: 'tarball', current: current || '', latest: null, hasUpdate: false, status: 'ok', url: `https://github.com/${repo}/releases` }
   try {
-    const rel = await fetchJson(`${GITHUB_API}/repos/${repo}/releases/latest`, { fetchFn, headers: { accept: 'application/vnd.github+json' } })
-    const tag = String(rel?.tag_name || '')
+    let tag = ''
+    if (pkg !== '') {
+      const list = await fetchJson(`${GITHUB_API}/repos/${repo}/releases?per_page=100`, { fetchFn, headers: { accept: 'application/vnd.github+json' } })
+      const prefix = `${pkg}@`
+      const hit = (Array.isArray(list) ? list : [])
+        .find(rel => String(rel?.tag_name || '').startsWith(prefix) && !rel.draft)
+      if (hit) tag = String(hit.tag_name)
+    }
+    if (tag === '') {
+      const rel = await fetchJson(`${GITHUB_API}/repos/${repo}/releases/latest`, { fetchFn, headers: { accept: 'application/vnd.github+json' } })
+      tag = String(rel?.tag_name || '')
+    }
     const latest = /\.?v?(\d[^\s-]*)/i.exec(tag)?.[1] || tag
     result.latest = latest
     result.hasUpdate = latest !== '' && latest !== current && compareVersions(latest, current) > 0
@@ -383,7 +399,7 @@ export async function refreshProfile(home, profile, state, { fetchFn, force = fa
     } else if (info.source.type === 'github') {
       cache[key] = { ...(await checkGithub(info.source.repo, info.version, { fetchFn })), checkedAt: new Date(now).toISOString() }
     } else if (info.source.type === 'tarball') {
-      cache[key] = { ...(await checkTarball(info.source.repo, info.version || info.source.version, { fetchFn })), checkedAt: new Date(now).toISOString() }
+      cache[key] = { ...(await checkTarball(info.source.repo, info.version || info.source.version, { fetchFn, pkg: info.pkg })), checkedAt: new Date(now).toISOString() }
     } else if (info.source.type === 'link') {
       const fp = readLinkFingerprint(info.source.path)
       const base = prev?.base || { version: fp.version, commit: fp.commit }
