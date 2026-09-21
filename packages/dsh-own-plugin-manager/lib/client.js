@@ -1,23 +1,27 @@
 /**
  * dsh-own-plugin-manager — browser half (runs inside the dsh web GUI).
  *
- * 侧边栏「🔌 插件管理」入口 + 悬浮管理面板：
+ * 设置分区（设置 → 插件管家）：
  *
- *   - 菜单行锚定 sidebar.workspaces 插槽（与 dsh-web-sites 共存：若检测到
- *     其菜单存在，则定位在其下方并动态加大插槽顶部留白）。
- *   - 徽标显示可用更新总数（npm/github/tgz 新版本 + link 源码变化）。
- *   - 面板：profile 分组 chips、每插件一行（版本/来源徽标/自研★/启停
+ *   - 注册官方 settings.section slot：设置对话框导航中的独立分区
+ *     （order 34，紧邻第三方「插件管理」35），带插头图标。
+ *   - profile chips 分组过滤、每插件一行（版本/来源徽标/自研★/启停
  *     开关/更新徽标）、「检查更新」按钮、link 源码更新「已生效」基线对齐。
  *   - 启停走 host 半边行级 patch profile cordis.patch.yml（保留注释），
  *     改动需 profile 重载/重启生效，UI 有明确提示。
  *
  * Implementation notes
  * --------------------
- * - 面板/菜单挂在 document.body（React 树外，position:fixed），幂等挂载，
- *   MutationObserver 自愈；挂载失败仅 console.warn，绝不阻断 GUI。
+ * - 经典 __ModuleLoader__ 脚本：factory 内 require('react')（模块表种子，
+ *     dshmarket / dsh-plugin-manager 同款模式），返回
+ *     { apply, inject: ['slots'] }；挂载生命周期交给 slot 系统，
+ *     不再需要 MutationObserver 自愈与 fixed 定位面板。
+ * - 分区组件外包一层 ErrorBoundary：渲染崩溃只降级本分区
+ *     （显示错误行），绝不弄 blank 整个设置对话框。
  * - 配色全部走 --dsw-alias-* / --dsw-specific-* token，自动跟随明暗主题；
  *   只用纯色，不用渐变。
  * - API：GET /api/dsh-opm/state、POST refresh/toggle/ack（loopback 围栏内）。
+ * - toast 仍挂 document.body（React 树外，fixed 定位）。
  */
 
 window.__ModuleLoader__.load({
@@ -27,46 +31,18 @@ window.__ModuleLoader__.load({
     var exports = module.exports
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
+    const react = require('react')
+
     // ------------------------------------------------------------- constants
     const API_STATE = '/api/dsh-opm/state'
     const API_REFRESH = '/api/dsh-opm/refresh'
     const API_TOGGLE = '/api/dsh-opm/toggle'
     const API_ACK = '/api/dsh-opm/ack'
     const ROOT = 'opm'
+    const SECTION_ID = 'own-plugin-manager'
     const SOURCE_LABEL = { npm: 'npm', github: 'GitHub', link: '本地', tarball: '发布包', other: '其他' }
 
-    // ------------------------------------------------------------------ state
-    let ctx = null
-    let observer = null
-    let menuEl = null
-    let panelEl = null
-    let view = null            // latest /state payload
-    let activeProfile = ''     // '' = all profiles
-    let loading = false
-    let refreshing = false
-    let toastEl = null
-    let toastTimer = null
-
     // ---------------------------------------------------------------- helpers
-    function $(sel, root) { return (root || document).querySelector(sel) }
-    function $all(sel, root) { return Array.from((root || document).querySelectorAll(sel)) }
-
-    function el(tag, props = {}, children = []) {
-      const node = document.createElement(tag)
-      for (const [key, value] of Object.entries(props)) {
-        if (key === 'class') node.className = value
-        else if (key === 'text') node.textContent = value
-        else if (key === 'html') node.innerHTML = value
-        else if (key.startsWith('on') && typeof value === 'function') node.addEventListener(key.slice(2), value)
-        else if (value !== null && value !== undefined && value !== false) node.setAttribute(key, value === true ? '' : value)
-      }
-      for (const child of [].concat(children)) {
-        if (child === null || child === undefined || child === false) continue
-        node.append(child.nodeType ? child : document.createTextNode(String(child)))
-      }
-      return node
-    }
-
     /** 相对时间：3 分钟前 / 2 小时前 / —。 */
     function timeAgo(iso) {
       if (!iso) return '—'
@@ -80,10 +56,15 @@ window.__ModuleLoader__.load({
       return `${Math.floor(hours / 24)} 天前`
     }
 
+    // toast（React 树外的 body 级元素，避免每分区重复渲染）
+    let toastEl = null
+    let toastTimer = null
     function toast(message, tone = 'info') {
       try {
         if (toastEl === null) {
-          toastEl = el('div', { class: `${ROOT}-toast`, role: 'status' })
+          toastEl = document.createElement('div')
+          toastEl.className = `${ROOT}-toast`
+          toastEl.setAttribute('role', 'status')
           document.body.append(toastEl)
         }
         toastEl.dataset.tone = tone
@@ -111,329 +92,244 @@ window.__ModuleLoader__.load({
       return data
     }
 
-    // ------------------------------------------------------------------ data
-    async function loadState() {
-      loading = true
-      renderPanel()
-      try {
-        view = await apiGet(API_STATE)
-      } catch (error) {
-        toast(`插件状态加载失败：${error.message}`, 'error')
-        view = { profiles: [], updateCount: 0, checkedAt: null, error: error.message }
-      } finally {
-        loading = false
-        renderPanel()
-        refreshMenuBadge()
-      }
+    // -------------------------------------------------------------- components
+    /** 设置导航行内容：插头图标 + 文案（默认齿轮图标由 CSS 隐藏）。 */
+    function NavLabel() {
+      return react.createElement('span', {
+        'data-settings-nav-label': SECTION_ID,
+        style: { display: 'inline-flex', alignItems: 'center', gap: 8 },
+      },
+        react.createElement('svg', {
+          width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none',
+          'aria-hidden': 'true', style: { flex: '0 0 auto' },
+        },
+          react.createElement('path', {
+            d: 'M6 1.5v3M10 1.5v3M4.5 6h7v1.5a3.5 3.5 0 0 1-3.5 3.5 3.5 3.5 0 0 1-3.5-3.5zM8 11v3.5',
+            stroke: 'currentColor', strokeWidth: 1.5,
+            strokeLinecap: 'round', strokeLinejoin: 'round',
+          }),
+        ),
+        react.createElement('span', null, '插件管家'),
+      )
     }
 
-    async function checkUpdates() {
-      refreshing = true
-      renderPanel()
-      try {
-        const data = await apiPost(API_REFRESH, { force: true })
-        view = data.view || view
-        const count = view?.updateCount || 0
-        toast(count > 0 ? `检测完成：${count} 个可用更新` : '检测完成：全部插件均为最新', 'ok')
-      } catch (error) {
-        toast(`检测失败：${error.message}`, 'error')
-      } finally {
-        refreshing = false
-        renderPanel()
-        refreshMenuBadge()
-      }
-    }
-
-    async function togglePlugin(profileName, plugin) {
-      const next = !plugin.disabled
-      try {
-        await apiPost(API_TOGGLE, { profile: profileName, plugin: plugin.pkg, disabled: next })
-        plugin.disabled = next
-        toast(next ? `已停用 ${plugin.pkg}（重载 profile 后生效）` : `已启用 ${plugin.pkg}（重载 profile 后生效）`, 'ok')
-        renderPanel()
-      } catch (error) {
-        toast(`启停失败：${error.message}`, 'error')
-      }
-    }
-
-    async function ackPlugin(profileName, plugin) {
-      try {
-        await apiPost(API_ACK, { profile: profileName, plugin: plugin.pkg })
-        if (plugin.check) { plugin.check.hasUpdate = false }
-        toast(`已确认 ${plugin.pkg} 更新生效`, 'ok')
-        renderPanel()
-        refreshMenuBadge()
-      } catch (error) {
-        toast(`确认失败：${error.message}`, 'error')
-      }
-    }
-
-    // -------------------------------------------------------------- rendering
     function badge(kind, text, title) {
-      return el('span', { class: `${ROOT}-badge`, 'data-kind': kind, title: title || '' }, text)
+      return react.createElement('span', {
+        className: `${ROOT}-badge`, 'data-kind': kind, title: title || '',
+      }, text)
     }
 
     function sourceBadge(info) {
-      const type = info.source?.type || 'other'
+      const type = (info.source && info.source.type) || 'other'
       const label = SOURCE_LABEL[type] || type
-      const title = type === 'link' ? info.source.path : info.source.spec || type
+      const title = type === 'link' ? info.source.path : (info.source.spec || type)
       return badge('src', label, title)
     }
 
-    function updateBadge(profileName, info) {
+    function updateBadge(profileName, info, onAck) {
       const check = info.check
       if (!check) return null
       if (check.type === 'link' && check.hasUpdate) {
         const parts = []
-        if (check.base?.version && check.base.version !== check.current) parts.push(`v${check.base.version} → v${check.current}`)
-        const wrap = el('span', { class: `${ROOT}-upd` },
+        if (check.base && check.base.version && check.base.version !== check.current) {
+          parts.push(`v${check.base.version} → v${check.current}`)
+        }
+        return react.createElement('span', { className: `${ROOT}-upd` },
           badge('link', '源码已更新'),
-          parts.length > 0 ? el('span', { class: `${ROOT}-upd-ver`, text: parts.join(' · ') }) : null,
-          el('button', {
-            class: `${ROOT}-ack`, type: 'button', title: '已重启/重载，确认基线',
-            onclick: event => { event.stopPropagation(); ackPlugin(profileName, info) },
+          parts.length > 0 ? react.createElement('span', { className: `${ROOT}-upd-ver` }, parts.join(' · ')) : null,
+          react.createElement('button', {
+            className: `${ROOT}-ack`, type: 'button', title: '已重启/重载，确认基线',
+            onClick: event => { event.stopPropagation(); onAck(profileName, info) },
           }, '已生效'),
         )
-        return wrap
       }
       if (check.hasUpdate && check.latest) {
-        return el('span', { class: `${ROOT}-upd` },
-          el('span', { class: `${ROOT}-upd-ver`, title: `当前 v${info.version || '?'} → 最新 v${check.latest}`, text: `v${info.version || '?'} → ${check.latest.startsWith('v') ? '' : 'v'}${check.latest}` }),
-          check.url ? el('a', { class: `${ROOT}-upd-link`, href: check.url, target: '_blank', rel: 'noopener', title: '查看更新日志', onclick: event => event.stopPropagation() }, '更新日志') : null,
+        return react.createElement('span', { className: `${ROOT}-upd` },
+          react.createElement('span', {
+            className: `${ROOT}-upd-ver`,
+            title: `当前 v${info.version || '?'} → 最新 v${check.latest}`,
+          }, `v${info.version || '?'} → ${check.latest.startsWith('v') ? '' : 'v'}${check.latest}`),
+          check.url ? react.createElement('a', {
+            className: `${ROOT}-upd-link`, href: check.url, target: '_blank', rel: 'noopener',
+            title: '查看更新日志', onClick: event => event.stopPropagation(),
+          }, '更新日志') : null,
         )
       }
       if (check.status && check.status.startsWith('error')) {
-        return el('span', { class: `${ROOT}-upd-err`, title: check.status }, '检测失败')
+        return react.createElement('span', { className: `${ROOT}-upd-err`, title: check.status }, '检测失败')
       }
       return null
     }
 
-    function switchEl(profileName, info) {
-      const sw = el('button', {
-        class: `${ROOT}-sw`, type: 'button', role: 'switch',
-        'aria-checked': String(!info.disabled),
+    function switchEl(profileName, info, onToggle) {
+      const on = !info.disabled
+      return react.createElement('button', {
+        className: `${ROOT}-sw`, type: 'button', role: 'switch',
+        'aria-checked': String(on),
         'aria-label': `${info.disabled ? '启用' : '停用'} ${info.pkg}`,
         title: info.bundled ? (info.disabled ? '点击启用（重载 profile 后生效）' : '点击停用（重载 profile 后生效）') : '不在 bundles 中，需手动接线',
-        onclick: event => { event.stopPropagation(); togglePlugin(profileName, info) },
-      }, el('span', { class: `${ROOT}-sw-dot` }))
-      sw.dataset.on = String(!info.disabled)
-      sw.dataset.locked = String(!info.bundled)
-      return sw
+        'data-on': String(on),
+        'data-locked': String(!info.bundled),
+        onClick: event => { event.stopPropagation(); onToggle(profileName, info) },
+      }, react.createElement('span', { className: `${ROOT}-sw-dot` }))
     }
 
-    function pluginRow(profileName, info) {
-      const head = el('div', { class: `${ROOT}-row-head` },
-        el('span', { class: `${ROOT}-row-dot`, 'data-off': String(info.disabled) }),
-        el('span', { class: `${ROOT}-row-name`, title: info.pkg },
-          info.own ? el('span', { class: `${ROOT}-row-own`, title: '自研插件（dsh-plugins monorepo）' }, '★') : null,
-          info.pkg.replace(/^dsh-/, ''),
+    function pluginRow(profileName, info, onToggle, onAck) {
+      return react.createElement('div', { className: `${ROOT}-row`, 'data-off': String(info.disabled), key: info.pkg },
+        react.createElement('div', { className: `${ROOT}-row-head` },
+          react.createElement('span', { className: `${ROOT}-row-dot`, 'data-off': String(info.disabled) }),
+          react.createElement('span', { className: `${ROOT}-row-name`, title: info.pkg },
+            info.own ? react.createElement('span', { className: `${ROOT}-row-own`, title: '自研插件（dsh-plugins monorepo）' }, '★') : null,
+            info.pkg.replace(/^dsh-/, ''),
+          ),
+          info.version ? react.createElement('span', { className: `${ROOT}-row-ver` }, `v${info.version}`) : null,
+          sourceBadge(info),
         ),
-        info.version ? el('span', { class: `${ROOT}-row-ver`, text: `v${info.version}` }) : null,
-        sourceBadge(info),
+        react.createElement('div', { className: `${ROOT}-row-ops` }, updateBadge(profileName, info, onAck), switchEl(profileName, info, onToggle)),
+        info.description ? react.createElement('div', { className: `${ROOT}-row-desc`, title: info.description }, info.description) : null,
       )
-      const ops = el('div', { class: `${ROOT}-row-ops` }, updateBadge(profileName, info), switchEl(profileName, info))
-      const desc = info.description
-        ? el('div', { class: `${ROOT}-row-desc`, title: info.description, text: info.description })
-        : null
-      return el('div', { class: `${ROOT}-row`, 'data-off': String(info.disabled) }, head, ops, desc)
     }
 
-    function profileSection(profile) {
-      const updates = profile.plugins.filter(p => p.check?.hasUpdate).length
-      const section = el('div', { class: `${ROOT}-sec` },
-        el('div', { class: `${ROOT}-sec-head` },
-          el('span', { class: `${ROOT}-sec-name`, text: profile.name }),
-          el('span', { class: `${ROOT}-sec-meta`, text: `${profile.plugins.length} 个插件${updates > 0 ? ` · ${updates} 个更新` : ''}` }),
+    function profileSection(profile, onToggle, onAck) {
+      const updates = profile.plugins.filter(p => p.check && p.check.hasUpdate).length
+      return react.createElement('div', { className: `${ROOT}-sec`, key: profile.name },
+        react.createElement('div', { className: `${ROOT}-sec-head` },
+          react.createElement('span', { className: `${ROOT}-sec-name` }, profile.name),
+          react.createElement('span', { className: `${ROOT}-sec-meta` }, `${profile.plugins.length} 个插件${updates > 0 ? ` · ${updates} 个更新` : ''}`),
         ),
+        ...profile.plugins.map(info => pluginRow(profile.name, info, onToggle, onAck)),
       )
-      for (const info of profile.plugins) section.append(pluginRow(profile.name, info))
-      return section
     }
 
-    function profileChips() {
-      const names = (view?.profiles || []).map(p => p.name)
-      const chips = el('div', { class: `${ROOT}-chips` })
-      const all = el('button', {
-        class: `${ROOT}-chip`, type: 'button',
-        onclick: () => { activeProfile = ''; renderPanel() },
-      }, '全部')
-      if (activeProfile === '') all.dataset.on = 'true'
-      chips.append(all)
-      for (const name of names) {
-        const p = view.profiles.find(x => x.name === name)
-        const updates = p?.plugins.filter(x => x.check?.hasUpdate).length || 0
-        const chip = el('button', {
-          class: `${ROOT}-chip`, type: 'button',
-          onclick: () => { activeProfile = name; renderPanel() },
-        }, [name, updates > 0 ? el('span', { class: `${ROOT}-chip-n`, text: String(updates) }) : null])
-        if (activeProfile === name) chip.dataset.on = 'true'
-        chips.append(chip)
-      }
-      return chips
-    }
+    /** 主分区组件：状态加载 + profile 过滤 + 操作。 */
+    function OwnPluginManagerSection() {
+      const [view, setView] = react.useState(null)
+      const [activeProfile, setActiveProfile] = react.useState('')
+      const [loading, setLoading] = react.useState(true)
+      const [refreshing, setRefreshing] = react.useState(false)
 
-    function renderPanel() {
-      if (panelEl === null) return
-      const chipsBox = $(`.${ROOT}-chipsbox`, panelEl)
-      if (chipsBox) chipsBox.replaceChildren(profileChips())
-      const body = $(`.${ROOT}-body`, panelEl)
-      if (!body) return
-      body.replaceChildren()
+      react.useEffect(() => {
+        let alive = true
+        apiGet(API_STATE)
+          .then(data => { if (alive) setView(data) })
+          .catch(error => {
+            if (!alive) return
+            setView({ profiles: [], updateCount: 0, checkedAt: null, error: error.message })
+            console.warn('[own-plugin-manager] state load failed', error)
+          })
+          .finally(() => { if (alive) setLoading(false) })
+        return () => { alive = false }
+      }, [])
 
-      // header meta row
-      const meta = $(`.${ROOT}-meta`, panelEl)
-      if (meta) {
-        meta.replaceChildren(
-          el('span', { class: `${ROOT}-meta-time`, title: view?.checkedAt || '', text: `上次检测：${timeAgo(view?.checkedAt)}` }),
-          el('button', {
-            class: `${ROOT}-btn`, type: 'button',
-            onclick: checkUpdates,
-          }, refreshing ? '检测中…' : '检查更新'),
-        )
-      }
-
-      if (loading) {
-        body.append(el('div', { class: `${ROOT}-empty`, text: '正在加载插件状态…' }))
-        return
-      }
-      const profiles = (view?.profiles || []).filter(p => activeProfile === '' || p.name === activeProfile)
-      if (profiles.length === 0) {
-        body.append(el('div', { class: `${ROOT}-empty`, text: view?.error ? `加载失败：${view.error}` : '未发现任何 profile 插件' }))
-        return
-      }
-      for (const profile of profiles) body.append(profileSection(profile))
-    }
-
-    function openPanel() {
-      if (panelEl === null) return
-      anchorPanel()
-      panelEl.dataset.show = 'true'
-      if (view === null) loadState()
-    }
-
-    function closePanel() {
-      if (panelEl !== null) panelEl.dataset.show = 'false'
-    }
-
-    function panelOpen() {
-      return panelEl !== null && panelEl.dataset.show === 'true'
-    }
-
-    function anchorPanel() {
-      if (panelEl === null || menuEl === null) return
-      const rect = menuEl.getBoundingClientRect()
-      panelEl.style.left = `${Math.round(rect.left)}px`
-      const top = Math.round(rect.bottom + 6)
-      panelEl.style.top = `${Math.min(top, Math.max(8, window.innerHeight - 120))}px`
-    }
-
-    function refreshMenuBadge() {
-      if (menuEl === null) return
-      const badgeNode = $(`.${ROOT}-menu-n`, menuEl)
-      const count = view?.updateCount || 0
-      if (badgeNode) {
-        badgeNode.dataset.show = String(count > 0)
-        const next = String(count)
-        if (badgeNode.textContent !== next) badgeNode.textContent = next
-      }
-    }
-
-    // ------------------------------------------------------------ mount / ui
-    function mountMenu() {
-      if (menuEl !== null && document.body.contains(menuEl)) return
-      menuEl = el('button', {
-        class: `${ROOT}-menu`, type: 'button',
-        title: '管理已装插件 · 检查版本更新',
-        'aria-haspopup': 'dialog',
-      },
-        el('span', { class: `${ROOT}-menu-icon`, 'aria-hidden': 'true' }, '🔌'),
-        el('span', { class: `${ROOT}-menu-label` }, '插件管理'),
-        el('span', { class: `${ROOT}-menu-n`, 'data-show': 'false' }, '0'),
-      )
-      menuEl.addEventListener('click', () => { panelOpen() ? closePanel() : openPanel() })
-      document.body.append(menuEl)
-      positionMenu()
-      refreshMenuBadge()
-    }
-
-    /**
-     * 菜单 fixed 定位在 sidebar.workspaces 插槽顶端；dsh-web-sites 的菜单
-     * 也在那里时让位到其下方，并把插槽留白扩到双菜单高度。
-     */
-    function positionMenu() {
-      if (menuEl === null) return
-      const collapsed = document.body.querySelector('[data-sidebar-collapsed="true"]') !== null
-        || document.documentElement.getAttribute('data-sidebar-collapsed') === 'true'
-      if (collapsed) { menuEl.style.display = 'none'; return }
-      menuEl.style.display = 'flex'
-
-      const slotRoot = document.querySelector('[data-slot="sidebar.workspaces"]')?.firstElementChild
-      if (!slotRoot) return
-      const rect = slotRoot.getBoundingClientRect()
-      const sitesMenu = document.querySelector('.dws-menu')
-      // 注意：fixed 定位元素的 offsetParent 恒为 null，用盒尺寸判断可见性。
-      const sitesVisible = sitesMenu !== null && sitesMenu.getBoundingClientRect().height > 0
-      let top = Math.round(rect.top)
-      let reserved = 36
-      if (sitesVisible) {
-        const below = Math.round(sitesMenu.getBoundingClientRect().bottom) + 2
-        if (below >= top - 4) { top = below; reserved = 70 }
-      }
-      menuEl.style.left = `${Math.round(rect.left)}px`
-      menuEl.style.top = `${top}px`
-      menuEl.style.width = `${Math.round(rect.width - 12)}px`
-      // 插槽留白：web-sites 的 CSS 给 36px；双菜单共存时 inline 提到 70px。
-      const current = slotRoot.style.paddingBlockStart
-      if (reserved === 70 && current !== '70px') {
-        slotRoot.style.paddingBlockStart = '70px'
-      } else if (reserved === 36 && current === '70px') {
-        slotRoot.style.paddingBlockStart = ''
-      }
-    }
-
-    function mountPanel() {
-      if (panelEl !== null && document.body.contains(panelEl)) return
-      panelEl = el('div', { class: `${ROOT}-panel`, role: 'dialog', 'aria-label': '插件管理', 'data-show': 'false' },
-        el('div', { class: `${ROOT}-head` },
-          el('span', { class: `${ROOT}-title` }, '插件管理'),
-          el('button', { class: `${ROOT}-close`, type: 'button', 'aria-label': '关闭', onclick: closePanel }, '✕'),
-        ),
-        el('div', { class: `${ROOT}-meta` }),
-        el('div', { class: `${ROOT}-chipsbox` }),
-        el('div', { class: `${ROOT}-body` }),
-        el('div', { class: `${ROOT}-foot` }, '启停改动在 profile 重载或 GUI 重启后生效；★ 为自研插件'),
-      )
-      document.body.append(panelEl)
-    }
-
-    function boot() {
-      ensureStyles()
-      mountMenu()
-      mountPanel()
-
-      observer = new MutationObserver(() => {
+      async function checkUpdates() {
+        if (refreshing) return
+        setRefreshing(true)
         try {
-          mountMenu()
-          mountPanel()
-          positionMenu()
-          if (panelOpen()) anchorPanel()
-        } catch (error) { console.warn('[own-plugin-manager] self-heal failed', error) }
-      })
-      observer.observe(document.body, { childList: true, subtree: true })
+          const data = await apiPost(API_REFRESH, { force: true })
+          if (data.view) setView(data.view)
+          const count = (data.view && data.view.updateCount) || 0
+          toast(count > 0 ? `检测完成：${count} 个可用更新` : '检测完成：全部插件均为最新', 'ok')
+        } catch (error) {
+          toast(`检测失败：${error.message}`, 'error')
+        } finally {
+          setRefreshing(false)
+        }
+      }
 
-      document.addEventListener('click', event => {
-        if (!panelOpen()) return
-        if (panelEl.contains(event.target) || menuEl.contains(event.target)) return
-        const inSidebar = event.target.closest?.('[data-slot^="sidebar."]')
-        if (inSidebar && !inSidebar.contains(menuEl)) closePanel()
-      }, true)
-      document.addEventListener('keydown', event => {
-        if (event.key === 'Escape' && panelOpen()) closePanel()
-      })
-      window.addEventListener('resize', () => { positionMenu(); if (panelOpen()) anchorPanel() })
+      function patchPlugin(profileName, pkg, patch) {
+        setView(prev => {
+          if (!prev) return prev
+          return {
+            ...prev,
+            profiles: prev.profiles.map(p => {
+              if (p.name !== profileName) return p
+              return { ...p, plugins: p.plugins.map(x => (x.pkg === pkg ? patch(x) : x)) }
+            }),
+          }
+        })
+      }
 
-      // 静默预热一次状态（不打扰用户，仅刷新菜单徽标）。
-      loadState()
+      async function togglePlugin(profileName, plugin) {
+        const next = !plugin.disabled
+        try {
+          await apiPost(API_TOGGLE, { profile: profileName, plugin: plugin.pkg, disabled: next })
+          patchPlugin(profileName, plugin.pkg, x => ({ ...x, disabled: next }))
+          toast(next ? `已停用 ${plugin.pkg}（重载 profile 后生效）` : `已启用 ${plugin.pkg}（重载 profile 后生效）`, 'ok')
+        } catch (error) {
+          toast(`启停失败：${error.message}`, 'error')
+        }
+      }
+
+      async function ackPlugin(profileName, plugin) {
+        try {
+          await apiPost(API_ACK, { profile: profileName, plugin: plugin.pkg })
+          patchPlugin(profileName, plugin.pkg, x => ({ ...x, check: x.check ? { ...x.check, hasUpdate: false } : x.check }))
+          setView(prev => (prev ? { ...prev, updateCount: Math.max(0, (prev.updateCount || 0) - 1) } : prev))
+          toast(`已确认 ${plugin.pkg} 更新生效`, 'ok')
+        } catch (error) {
+          toast(`确认失败：${error.message}`, 'error')
+        }
+      }
+
+      const profiles = (view && view.profiles || []).filter(p => activeProfile === '' || p.name === activeProfile)
+      const names = (view && view.profiles || []).map(p => p.name)
+
+      return react.createElement('div', { className: `${ROOT}-page` },
+        // 顶部：上次检测时间 + 检查更新
+        react.createElement('div', { className: `${ROOT}-meta` },
+          react.createElement('span', { className: `${ROOT}-meta-time`, title: (view && view.checkedAt) || '' },
+            `上次检测：${timeAgo(view && view.checkedAt)}`),
+          react.createElement('button', {
+            className: `${ROOT}-btn`, type: 'button', disabled: refreshing,
+            onClick: checkUpdates,
+          }, refreshing ? '检测中…' : '检查更新'),
+        ),
+        // profile chips
+        names.length > 0 ? react.createElement('div', { className: `${ROOT}-chips` },
+          react.createElement('button', {
+            className: `${ROOT}-chip`, type: 'button', 'data-on': String(activeProfile === ''),
+            onClick: () => setActiveProfile(''),
+          }, '全部'),
+          ...names.map(name => {
+            const p = view.profiles.find(x => x.name === name)
+            const updates = (p && p.plugins.filter(x => x.check && x.check.hasUpdate).length) || 0
+            return react.createElement('button', {
+              className: `${ROOT}-chip`, type: 'button', key: name,
+              'data-on': String(activeProfile === name),
+              onClick: () => setActiveProfile(name),
+            },
+              name,
+              updates > 0 ? react.createElement('span', { className: `${ROOT}-chip-n` }, String(updates)) : null,
+            )
+          }),
+        ) : null,
+        // 主体
+        react.createElement('div', { className: `${ROOT}-list` },
+          loading
+            ? react.createElement('div', { className: `${ROOT}-empty` }, '正在加载插件状态…')
+            : profiles.length === 0
+              ? react.createElement('div', { className: `${ROOT}-empty` }, (view && view.error) ? `加载失败：${view.error}` : '未发现任何 profile 插件')
+              : profiles.map(profile => profileSection(profile, togglePlugin, ackPlugin)),
+        ),
+        react.createElement('div', { className: `${ROOT}-foot` }, '启停改动在 profile 重载或 GUI 重启后生效；★ 为自研插件'),
+      )
+    }
+
+    /** 分区级错误边界：崩溃只降级本分区，不波及整个设置对话框。 */
+    class SectionErrorBoundary extends react.Component {
+      constructor(props) {
+        super(props)
+        this.state = { error: null }
+      }
+      static getDerivedStateFromError(error) { return { error } }
+      componentDidCatch(error) { console.warn('[own-plugin-manager] section crashed', error) }
+      render() {
+        if (this.state.error !== null) {
+          const message = this.state.error instanceof Error ? this.state.error.message : String(this.state.error)
+          return react.createElement('div', { className: `${ROOT}-empty` }, `插件管家渲染失败：${message}`)
+        }
+        return this.props.children
+      }
     }
 
     // ---------------------------------------------------------------- styles
@@ -443,86 +339,32 @@ window.__ModuleLoader__.load({
       style.id = 'dsh-own-plugin-manager-styles'
       style.setAttribute('data-plugin', 'dsh-own-plugin-manager')
       style.textContent = `
-/* 菜单留白兜底：无 web-sites 时也保证 36px（与 web-sites 的规则等价）。 */
-[data-slot="sidebar.workspaces"] > :first-child { padding-block-start: 36px; }
-body:has([data-sidebar-collapsed="true"]) .${ROOT}-menu,
-body:has([data-sidebar-collapsed="true"]) .${ROOT}-panel { display: none !important; }
+/* 设置导航：隐藏本分区默认齿轮图标（label 自带插头图标）。 */
+button:has([data-settings-nav-label="${SECTION_ID}"]) > svg:first-child { display: none; }
 
-.${ROOT}-menu {
-  all: unset; box-sizing: border-box;
-  position: fixed; z-index: 81;
-  display: flex; align-items: center; gap: 8px;
-  height: 32px; margin: 0; padding: 0 10px;
-  border-radius: 8px; cursor: pointer;
-  color: var(--dsw-alias-label-secondary, #666);
-  font-size: 13px;
-  transition: color .12s ease, background-color .12s ease;
-}
-.${ROOT}-menu:hover { color: var(--dsw-alias-label-primary, #1a1a1a); background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,0.06)); }
-.${ROOT}-menu[data-active="true"], .${ROOT}-menu:focus-visible { color: var(--dsw-alias-label-primary, #1a1a1a); }
-.${ROOT}-menu:focus-visible { outline: 2px solid var(--dsw-alias-button-info-fill, #4d6bfe); outline-offset: -2px; }
-.${ROOT}-menu-icon { font-size: 13px; line-height: 1; }
-.${ROOT}-menu-label { flex: 1 1 auto; min-width: 0; text-align: left; font-weight: 500; }
-.${ROOT}-menu-n {
-  display: none; flex: 0 0 auto;
-  min-width: 16px; height: 16px; padding: 0 4px;
-  border-radius: 8px;
-  background: var(--dsw-alias-button-info-fill, #4d6bfe);
-  color: var(--dsw-alias-label-primary-foreground, #fff);
-  font-size: 10px; line-height: 16px; text-align: center;
-}
-.${ROOT}-menu-n[data-show="true"] { display: inline-block; }
-
-/* ---- panel ---- */
-.${ROOT}-panel {
-  position: fixed; z-index: 82;
-  display: none; flex-direction: column;
-  width: min(440px, calc(100vw - 24px)); max-height: 76vh;
-  box-sizing: border-box;
-  background: var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-base, #fff));
-  border: 1px solid var(--dsw-alias-border-l2, rgba(0,0,0,0.10));
-  border-radius: 12px;
-  box-shadow: var(--dsw-shadow-lv3, 0 12px 32px rgba(0,0,0,0.16));
-  overflow: hidden;
-  animation: ${ROOT}-panel-in .16s cubic-bezier(0.2, 0.8, 0.4, 1);
-}
-.${ROOT}-panel[data-show="true"] { display: flex; }
-@keyframes ${ROOT}-panel-in {
-  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
-}
-.${ROOT}-head {
-  flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 14px 8px;
-  font-size: 13px; font-weight: 600;
+.${ROOT}-page {
+  display: flex; flex-direction: column; gap: 10px;
+  max-width: 720px;
   color: var(--dsw-alias-label-primary, #1a1a1a);
+  font-size: 13px;
 }
-.${ROOT}-close {
-  all: unset; cursor: pointer; padding: 2px 6px; border-radius: 6px;
-  color: var(--dsw-alias-label-tertiary, #999); font-size: 12px;
-}
-.${ROOT}-close:hover { color: var(--dsw-alias-label-primary, #1a1a1a); background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,0.06)); }
+
 .${ROOT}-meta {
-  flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 0 14px 8px;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
 }
 .${ROOT}-meta-time { font-size: 11px; color: var(--dsw-alias-label-tertiary, #999); }
 .${ROOT}-btn {
   all: unset; cursor: pointer; box-sizing: border-box;
-  padding: 3px 10px; border-radius: 7px;
+  padding: 4px 12px; border-radius: 8px;
   background: var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,0.06));
   color: var(--dsw-alias-label-secondary, #666);
-  font-size: 11px;
+  font-size: 12px;
 }
 .${ROOT}-btn:hover { color: var(--dsw-alias-label-primary, #1a1a1a); background: var(--dsw-alias-interactive-bg-active, rgba(0,0,0,0.10)); }
 .${ROOT}-btn[disabled] { opacity: .5; cursor: default; }
 
-.${ROOT}-body { flex: 1 1 auto; overflow-y: auto; padding: 0 8px 8px; }
-.${ROOT}-empty { padding: 24px 8px; text-align: center; font-size: 12px; color: var(--dsw-alias-label-tertiary, #999); }
-
-.${ROOT}-chipsbox {
-  flex: 0 0 auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  padding: 0 14px 8px;
+.${ROOT}-chips {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
 }
 .${ROOT}-chip {
   all: unset; cursor: pointer; box-sizing: border-box;
@@ -544,6 +386,9 @@ body:has([data-sidebar-collapsed="true"]) .${ROOT}-panel { display: none !import
   font-size: 9px; line-height: 14px; text-align: center;
 }
 .${ROOT}-chip[data-on="true"] .${ROOT}-chip-n { background: rgba(255,255,255,0.28); }
+
+.${ROOT}-list { display: flex; flex-direction: column; gap: 2px; }
+.${ROOT}-empty { padding: 24px 8px; text-align: center; font-size: 12px; color: var(--dsw-alias-label-tertiary, #999); }
 
 .${ROOT}-sec { padding: 2px 4px 6px; }
 .${ROOT}-sec-head {
@@ -636,12 +481,12 @@ body:has([data-sidebar-collapsed="true"]) .${ROOT}-panel { display: none !import
 .${ROOT}-sw[data-on="true"] .${ROOT}-sw-dot { left: 15px; }
 
 .${ROOT}-foot {
-  flex: 0 0 auto; padding: 7px 14px;
+  padding-top: 4px;
   border-top: 1px solid var(--dsw-alias-border-l2, rgba(0,0,0,0.08));
   font-size: 10px; color: var(--dsw-alias-label-tertiary, #999);
 }
 
-/* toast */
+/* toast（body 级，React 树外） */
 .${ROOT}-toast {
   position: fixed; z-index: 96; left: 50%; bottom: 28px;
   transform: translateX(-50%) translateY(6px);
@@ -661,18 +506,28 @@ body:has([data-sidebar-collapsed="true"]) .${ROOT}-panel { display: none !import
     }
 
     // ------------------------------------------------------------------ apply
-    function applyClient(context) {
-      ctx = context
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => { try { boot() } catch (error) { console.warn('[own-plugin-manager] boot failed', error) } }, { once: true })
-      } else {
-        try { boot() } catch (error) { console.warn('[own-plugin-manager] boot failed', error) }
+    function applyClient(ctx) {
+      try {
+        ensureStyles()
+        if (!ctx || !ctx.slots || typeof ctx.slots.inject !== 'function') {
+          console.warn('[own-plugin-manager] slots service unavailable — settings section not registered')
+          return
+        }
+        ctx.slots.inject('settings.section', () => ctx.slots.register({
+          name: 'settings.section',
+          id: SECTION_ID,
+          order: 34,
+          label: NavLabel,
+        }, () => react.createElement(SectionErrorBoundary, null,
+          react.createElement(OwnPluginManagerSection, null))))
+      } catch (error) {
+        console.warn('[own-plugin-manager] settings section registration failed', error)
       }
     }
 
-    module.exports = { apply: applyClient, inject: [] }
+    module.exports = { apply: applyClient, inject: ['slots'] }
     exports.apply = applyClient
-    exports.inject = []
+    exports.inject = ['slots']
     return module.exports
   },
 })

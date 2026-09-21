@@ -5,7 +5,8 @@ DSH 自研插件管家：集中管理各 profile 已装插件，并自动监测�
 纯两半边架构（不改 DSH 源码）：
 
 - **Host 半边**（`lib/index.js`）：注册回环信任的 HTTP 路由 + 后台定时版本检测；
-- **Client 半边**（`lib/client.js`）：侧边栏「🔌 插件管理」入口 + 悬浮管理面板。
+- **Client 半边**（`lib/client.js`）：设置对话框中的「插件管家」独立分区
+  （官方 `settings.section` slot，React 组件，带 ErrorBoundary 兜底）。
 
 ## 功能
 
@@ -38,7 +39,8 @@ DSH 自研插件管家：集中管理各 profile 已装插件，并自动监测�
 
 - 后台定时轮询：每 `DSH_OPM_INTERVAL_MIN`（默认 360 分钟，0 关闭）自动刷新一轮；
   GUI 启动时仅当缓存过期才补跑（不打 registry/GitHub API）。
-- 结果落盘 `~/.dsh/plugin-versions.json`（原子写），GUI 侧边栏入口徽标实时显示可用更新数。
+- 结果落盘 `~/.dsh/plugin-versions.json`（原子写），设置分区中每个 profile chip
+  与更新徽标实时显示可用更新数。
 - link 类源码变化后**保持基线**，徽标持续提醒「源码已更新 · 重启生效」，
   点「已生效」重新对齐基线。
 - GitHub API 无认证限流（60 次/小时）：默认间隔下每轮最多十几个请求，安全。
@@ -89,6 +91,13 @@ desktop profile（Electron 独占管理，CLI 拒绝操作）用手动接线：�
 
 ## 设计说明
 
+- **设置分区而非自绘悬浮层**：client 半边注册官方 `settings.section` slot
+  （`ctx.slots.inject`，返回插件声明 `inject: ['slots']`，`package.json` 的
+  `dsh.client.inject` 声明 `@deepseek-ai/dsh-client-ui-slots`），挂载生命周期
+  交给 slot 系统——无需 MutationObserver 自愈 / fixed 定位 / 与其他侧边栏
+  插件的让位协调；分区外层包 ErrorBoundary，渲染崩溃只降级本分区。
+  经典 `__ModuleLoader__` 脚本内 `require('react')` 取模块表种子（dshmarket /
+  dsh-plugin-manager 同款模式）。
 - **行级 patch 而非整文件重写**：profile 的 `cordis.patch.yml` 含大量用户注释
   （兼容性隔离说明等），启停操作只改目标条目的行，其余内容与注释逐字保留。
 - **link 基线语义**：link 安装的版本永远等于源码当前值，"更新"定义为
@@ -107,4 +116,12 @@ node test/smoke.mjs
 
 覆盖：来源解析、semver 比较、patchYml 行级启停（注释保留/幂等/追加）、
 profile 扫描（fixture）、四类检测器（注入 fake fetch）、状态读写原子性、
-路由围栏与各 handler、client 隔离断言（body 挂载 / token 配色 / 无渐变）。
+路由围栏与各 handler、client 静态断言（settings.section 注册 / token 配色 /
+无渐变 / 无旧侧边栏残留）、client 运行时冒烟（stub react + document，
+真实执行 factory/apply/组件渲染）。
+
+```bash
+node test/smoke.mjs
+node test/client-smoke.mjs
+node test/client-runtime.mjs
+```
