@@ -13,10 +13,13 @@
  *   7. refreshProfile —— link 基线对比、变化保持基线、ackLink 对齐
  *   8. buildView —— updateCount 汇总
  *   9. 路由 —— trusted 围栏（403/405）、state/refresh/toggle/ack handler
+ *  10. resolveGitRepo / repoSubpath / checkLink —— link 网络检测：
+ *      release 标签优先、分支回退、远端落后不误报、漂移不被网络失败掩盖
  *
  * Run: node test/smoke.mjs
  */
 import assert from 'node:assert/strict'
+import { execSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -24,6 +27,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, exist
 import './client-smoke.mjs'
 
 process.env.DSH_OPM_INTERVAL_MIN = '0' // 关闭后台定时器，测试进程干净退出
+delete process.env.DSH_OPM_OWN_REPO // repo 覆盖在对应用例内单独设置
 
 import {
   parseSource, compareVersions, isOwnSource,
@@ -31,6 +35,7 @@ import {
   listProfiles, readProfileState,
   readState, writeState, statePath,
   checkNpm, checkGithub, checkTarball, readLinkFingerprint,
+  resolveGitRepo, repoSubpath, checkLink,
   refreshProfile, ackLink, buildView,
 } from '../lib/core.js'
 import { apply, trusted } from '../lib/index.js'
@@ -339,6 +344,122 @@ function jsonRes(payload) {
   assert.equal(fooView.check.current, '0.2.0')
   rmSync(home, { recursive: true, force: true })
   console.log('link baseline + view ok')
+}
+
+// --------------------------------------------- link 网络检测（release/branch）
+/** 构造带 origin remote 的微型 git monorepo（packages/dsh-foo v0.1.0）。 */
+function makeGitFixture(remote = 'git@github.com:aa/bb.git') {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-opm-git-'))
+  const src = join(dir, 'packages', 'dsh-foo')
+  mkdirSync(src, { recursive: true })
+  writeFileSync(join(src, 'package.json'), JSON.stringify({ name: 'dsh-foo', version: '0.1.0' }))
+  execSync('git init -q', { cwd: dir, stdio: 'ignore' })
+  execSync(`git remote add origin ${remote}`, { cwd: dir, stdio: 'ignore' })
+  return { dir, src }
+}
+
+/** 按 URL 正则表路由的 fake fetch。 */
+function routeFetch(routes) {
+  return async url => {
+    for (const [re, payload] of routes) if (re.test(url)) return jsonRes(payload)
+    throw new Error(`unexpected fetch ${url}`)
+  }
+}
+
+{
+  // repo 解析：env 覆盖 > git remote；https/git@ 两种形态
+  assert.equal(resolveGitRepo('/anywhere', { env: { DSH_OPM_OWN_REPO: 'x/y' } }), 'x/y')
+  const gf = makeGitFixture()
+  assert.equal(resolveGitRepo(gf.src), 'aa/bb')
+  assert.equal(repoSubpath(gf.src), 'packages/dsh-foo')
+  assert.equal(repoSubpath(join(gf.dir, 'not-git')), '')
+  const gh = makeGitFixture('https://github.com/cc/dd.git')
+  assert.equal(resolveGitRepo(gh.src), 'cc/dd')
+  rmSync(gf.dir, { recursive: true, force: true })
+  rmSync(gh.dir, { recursive: true, force: true })
+  console.log('resolveGitRepo ok')
+}
+
+{
+  const { dir, src } = makeGitFixture()
+  const info = { pkg: 'dsh-foo', source: { type: 'link', path: src } }
+  const now = Date.parse('2026-09-22T00:00:00Z')
+
+  // ① release 标签命中（列表里混着别的包的 tag，按前缀过滤）
+  const relFetch = routeFetch([
+    [/\/releases\?per_page=100$/, [
+      { tag_name: 'dsh-other@v9.9.9', draft: false },
+      { tag_name: 'dsh-foo@v0.2.0', draft: false, html_url: 'https://github.com/aa/bb/releases/tag/dsh-foo%40v0.2.0' },
+    ]],
+  ])
+  let out = await checkLink(info, null, { fetchFn: relFetch, repo: 'aa/bb', now })
+  assert.equal(out.latest, '0.2.0')
+  assert.equal(out.latestSource, 'release')
+  assert.equal(out.remoteHasUpdate, true)
+  assert.equal(out.driftHasUpdate, false)
+  assert.equal(out.hasUpdate, true)
+  assert.ok(out.url.includes('releases/tag'))
+
+  // ② 无匹配标签 → 回退默认分支 packages/<pkg>/package.json
+  const branchFetch = routeFetch([
+    [/\/releases\?per_page=100$/, []],
+    [/\/repos\/aa\/bb$/, { default_branch: 'main' }],
+    [/raw\.githubusercontent\.com\/aa\/bb\/main\/packages\/dsh-foo\/package\.json$/, { version: '0.2.0' }],
+  ])
+  out = await checkLink(info, null, { fetchFn: branchFetch, repo: 'aa/bb', now })
+  assert.equal(out.latest, '0.2.0')
+  assert.equal(out.latestSource, 'branch')
+  assert.equal(out.branch, 'main')
+  assert.equal(out.remoteHasUpdate, true)
+
+  // ③ 远端落后于本地（本地开发中未 push）→ 不误报
+  const behindFetch = routeFetch([
+    [/\/releases\?per_page=100$/, []],
+    [/\/repos\/aa\/bb$/, { default_branch: 'main' }],
+    [/raw\.githubusercontent\.com/, { version: '0.0.9' }],
+  ])
+  out = await checkLink(info, null, { fetchFn: behindFetch, repo: 'aa/bb', now })
+  assert.equal(out.remoteHasUpdate, false)
+  assert.equal(out.hasUpdate, false)
+
+  // ④ 仅漂移（本地已 bump 到 0.2.0，远端同版本，基线 0.1.0）→ 漂移信号
+  writeFileSync(join(src, 'package.json'), JSON.stringify({ name: 'dsh-foo', version: '0.2.0' }))
+  const prev = { base: { version: '0.1.0', commit: '' } }
+  const driftFetch = routeFetch([
+    [/\/releases\?per_page=100$/, []],
+    [/\/repos\/aa\/bb$/, { default_branch: 'main' }],
+    [/raw\.githubusercontent\.com/, { version: '0.2.0' }],
+  ])
+  out = await checkLink(info, prev, { fetchFn: driftFetch, repo: 'aa/bb', now })
+  assert.equal(out.remoteHasUpdate, false)
+  assert.equal(out.driftHasUpdate, true)
+  assert.equal(out.hasUpdate, true)
+  // ack 只清漂移，不清远端信号
+  assert.equal(ackLink({ profiles: { p: { plugins: { 'dsh-foo': out } } } }, 'p', 'dsh-foo'), true)
+  assert.equal(out.driftHasUpdate, false)
+  assert.equal(out.hasUpdate, false)
+
+  // ⑤ 网络失败：不掩盖漂移；remoteError 记录、status 保持 ok
+  const failFetch = async () => { throw new Error('offline') }
+  out = await checkLink(info, prev, { fetchFn: failFetch, repo: 'aa/bb', now })
+  assert.equal(out.remoteHasUpdate, false)
+  assert.equal(out.driftHasUpdate, true)
+  assert.equal(out.hasUpdate, true)
+  assert.equal(out.status, 'ok')
+  assert.match(out.remoteError, /offline/)
+
+  // ⑥ repo 解析失败（非 git 目录且无 env）→ 纯本地指纹，零网络请求
+  const plainSrc = mkdtempSync(join(tmpdir(), 'dsh-opm-plain-'))
+  writeFileSync(join(plainSrc, 'package.json'), JSON.stringify({ version: '0.1.0' }))
+  const noFetch = async url => { throw new Error(`unexpected fetch ${url}`) }
+  out = await checkLink({ pkg: 'dsh-foo', source: { type: 'link', path: plainSrc } }, null, { fetchFn: noFetch, now })
+  assert.equal(out.latest, null)
+  assert.equal(out.remoteHasUpdate, false)
+  assert.equal(out.hasUpdate, false) // 首次：基线即当前指纹
+  assert.equal(out.status, 'ok')
+  rmSync(plainSrc, { recursive: true, force: true })
+  rmSync(dir, { recursive: true, force: true })
+  console.log('checkLink ok')
 }
 
 // ------------------------------------------------------------------ routes

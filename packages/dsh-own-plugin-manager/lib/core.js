@@ -10,7 +10,9 @@
  *   - parsePatchDisables / togglePluginInPatchYml：对 profile cordis.patch.yml
  *     做行级启停 patch（保留用户手写注释，绝不整体重写）
  *   - checkNpm / checkGithub / checkTarball / checkLink：四类来源的版本
- *     更新检测（fetch / git 可注入，便于测试与沙箱）
+ *     更新检测（fetch / git 可注入，便于测试与沙箱）；link 类为
+ *     「远端最新版 + 本地漂移」双信号：远端优先 GitHub release 标签
+ *     （<pkg>@vX.Y.Z），无匹配回退默认分支 <subpath>/package.json
  *   - readState / writeState：检测快照 + 缓存落盘（原子写）
  *   - refreshProfile / refreshAll：按缓存有效期增量刷新，link 类发现源码
  *     变化后保持基线直到 ack（表示「已重启生效」）
@@ -371,6 +373,96 @@ export function readLinkFingerprint(sourcePath) {
   return out
 }
 
+/** 解析 link 目录对应的 GitHub 仓库（owner/repo）；DSH_OPM_OWN_REPO 可覆盖，结果缓存。 */
+const gitRepoCache = new Map()
+export function resolveGitRepo(sourcePath, { env = process.env } = {}) {
+  const override = env.DSH_OPM_OWN_REPO
+  if (override) return override
+  if (gitRepoCache.has(sourcePath)) return gitRepoCache.get(sourcePath)
+  let repo = ''
+  try {
+    const url = execFileSync('git', ['-C', sourcePath, 'remote', 'get-url', 'origin'], {
+      encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+    const hit = /github\.com[/:]([^\s/]+)\/([^\s/]+?)(?:\.git)?$/i.exec(url)
+    if (hit) repo = `${hit[1]}/${hit[2]}`
+  } catch { /* 非 git 仓库 / 无 origin remote */ }
+  gitRepoCache.set(sourcePath, repo)
+  return repo
+}
+
+/** link 目录在仓库内的相对路径（如 packages/dsh-foo）；非 git 目录返回 ''。 */
+export function repoSubpath(sourcePath) {
+  try {
+    // --show-prefix 由 git 内部计算（避免 macOS /var 与 /private/var 符号链接差异）
+    const prefix = execFileSync('git', ['-C', sourcePath, 'rev-parse', '--show-prefix'], {
+      encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+    return prefix.replace(/\/+$/, '')
+  } catch { return '' }
+}
+
+/**
+ * monorepo release 标签：按 `<pkg>@` 前缀取最新非 draft tag。
+ * 刻意不做 releases/latest 兜底 —— monorepo 的 latest 可能是别的包的 tag。
+ */
+async function latestReleaseTag(repo, pkg, { fetchFn } = {}) {
+  const list = await fetchJson(`${GITHUB_API}/repos/${repo}/releases?per_page=100`, { fetchFn, headers: { accept: 'application/vnd.github+json' } })
+  const hit = (Array.isArray(list) ? list : [])
+    .find(rel => String(rel?.tag_name || '').startsWith(`${pkg}@`) && !rel.draft)
+  if (!hit) return null
+  return { tag: String(hit.tag_name), url: hit.html_url || `https://github.com/${repo}/releases` }
+}
+
+/**
+ * link 源检测（网络版）：「远端最新版 + 本地漂移」双信号。
+ *
+ *   - 远端：优先 GitHub release 标签（<pkg>@vX.Y.Z），无匹配回退默认分支
+ *     <subpath>/package.json 的 version；repo 从 link 目录 git remote 推导
+ *     （DSH_OPM_OWN_REPO 覆盖），推导失败退化为纯本地指纹。
+ *   - 漂移：本地指纹（version+commit）vs 基线，变化保持基线直到 ack。
+ *
+ * hasUpdate = remoteHasUpdate || driftHasUpdate；远端网络失败不掩盖漂移信号
+ * （错误记入 remoteError，status 保持 ok）。
+ */
+export async function checkLink(info, prev, { fetchFn, repo, now = Date.now() } = {}) {
+  const fp = readLinkFingerprint(info.source.path)
+  const base = prev?.base || { version: fp.version, commit: fp.commit }
+  const driftHasUpdate = fp.version !== base.version || fp.commit !== base.commit
+  const out = {
+    type: 'link', status: 'ok', checkedAt: new Date(now).toISOString(),
+    current: fp.version, currentCommit: fp.commit, base,
+    latest: null, latestSource: null, branch: null,
+    url: `file://${info.source.path}`,
+    remoteHasUpdate: false, driftHasUpdate, hasUpdate: driftHasUpdate,
+  }
+  const ownerRepo = repo !== undefined ? repo : resolveGitRepo(info.source.path)
+  if (!ownerRepo) return out
+  try {
+    const rel = await latestReleaseTag(ownerRepo, info.pkg, { fetchFn })
+    if (rel) {
+      out.latest = /\.?v?(\d[^\s-]*)/i.exec(rel.tag)?.[1] || rel.tag
+      out.latestSource = 'release'
+      out.url = rel.url
+    } else {
+      const meta = await fetchJson(`${GITHUB_API}/repos/${ownerRepo}`, { fetchFn, headers: { accept: 'application/vnd.github+json' } })
+      const branch = meta?.default_branch || 'main'
+      const sub = repoSubpath(info.source.path)
+      const file = sub === '' ? 'package.json' : `${sub}/package.json`
+      const pj = await fetchJson(`https://raw.githubusercontent.com/${ownerRepo}/${encodeURIComponent(branch)}/${file}`, { fetchFn, headers: { accept: 'application/vnd.github.raw' } })
+      out.latest = String(pj?.version || '') || null
+      out.latestSource = 'branch'
+      out.branch = branch
+      out.url = `https://github.com/${ownerRepo}/blob/${branch}/${file}`
+    }
+    out.remoteHasUpdate = !!out.latest && out.latest !== out.current && compareVersions(out.latest, out.current) > 0
+    out.hasUpdate = out.remoteHasUpdate || driftHasUpdate
+  } catch (error) {
+    out.remoteError = String(error?.message || error)
+  }
+  return out
+}
+
 // ------------------------------------------------------------------- refresh
 
 function isFresh(entry, now, maxAgeMin = CHECK_MAX_AGE_MIN) {
@@ -381,8 +473,8 @@ function isFresh(entry, now, maxAgeMin = CHECK_MAX_AGE_MIN) {
 /**
  * 刷新单个 profile 的检测缓存。
  *
- * link 类：与基线（base）比较 version/commit，变化即 hasUpdate=true 且
- * 保持基线不动 —— 直到 ackLink 指明「已重启生效」才重新对齐。
+ * link 类走 checkLink（远端最新版 + 本地漂移双信号）；远端有新版提示
+ * git pull，本地漂移（已 pull 未重启）保持基线直到 ackLink「已生效」。
  */
 export async function refreshProfile(home, profile, state, { fetchFn, force = false, now = Date.now() } = {}) {
   const snapshot = readProfileState(home, profile)
@@ -401,15 +493,7 @@ export async function refreshProfile(home, profile, state, { fetchFn, force = fa
     } else if (info.source.type === 'tarball') {
       cache[key] = { ...(await checkTarball(info.source.repo, info.version || info.source.version, { fetchFn, pkg: info.pkg })), checkedAt: new Date(now).toISOString() }
     } else if (info.source.type === 'link') {
-      const fp = readLinkFingerprint(info.source.path)
-      const base = prev?.base || { version: fp.version, commit: fp.commit }
-      const changed = fp.version !== base.version || fp.commit !== base.commit
-      cache[key] = {
-        type: 'link', status: 'ok', checkedAt: new Date(now).toISOString(),
-        current: fp.version, currentCommit: fp.commit,
-        base, hasUpdate: changed,
-        url: `file://${info.source.path}`,
-      }
+      cache[key] = await checkLink(info, prev, { fetchFn, now })
     } else {
       cache[key] = { type: 'other', status: 'unsupported', checkedAt: new Date(now).toISOString(), hasUpdate: false }
     }
@@ -434,12 +518,13 @@ export async function refreshAll(home, { profiles = null, fetchFn, force = false
   return { state: st, results: out }
 }
 
-/** link 插件基线对齐（用户确认已重启生效后调用）。 */
+/** link 插件基线对齐（用户确认已重启生效后调用）：只清漂移，不清远端更新。 */
 export function ackLink(state, profile, pkg, { now = Date.now() } = {}) {
   const entry = state?.profiles?.[profile]?.plugins?.[pkg]
   if (!entry || entry.type !== 'link') return false
   entry.base = { version: entry.current, commit: entry.currentCommit }
-  entry.hasUpdate = false
+  entry.driftHasUpdate = false
+  entry.hasUpdate = !!entry.remoteHasUpdate
   entry.ackedAt = new Date(now).toISOString()
   return true
 }

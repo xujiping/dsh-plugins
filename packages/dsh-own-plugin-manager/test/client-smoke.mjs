@@ -8,7 +8,8 @@
  *   4. 配色必须走 --dsw-alias-* / --dsw-specific-* token；
  *   5. 只用纯色：禁止 linear-gradient / radial-gradient；
  *   6. 禁止原生 prompt/alert/confirm（DSH Web GUI 下会静默失败）；
- *   7. 不得残留旧侧边栏方案（sidebar 插槽锚定 / dws-menu 协调 / MutationObserver）。
+ *   7. 自有/社区双 Tab + 卡片网格布局（对齐 dsh-plugin-manager 视觉体系）；
+ *   8. 不得残留旧侧边栏方案（sidebar 插槽锚定 / dws-menu 协调 / MutationObserver）。
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -49,18 +50,41 @@ assert.doesNotMatch(client, /linear-gradient|radial-gradient|conic-gradient/)
 assert.doesNotMatch(client, /window\.(prompt|alert|confirm)\(/)
 assert.doesNotMatch(client, /(^|[^.\w])(prompt|alert|confirm)\(/)
 
-// 7. hits the host routes defined in lib/index.js
+// 7. own/community tabs + card grid（dsh-plugin-manager 视觉体系）
+assert.match(client, /function aggregate\(view, profileFilter\)/)
+assert.match(client, /'自有插件 '/)
+assert.match(client, /'社区插件 '/)
+assert.match(client, /className: `\$\{ROOT\}-tab`/)
+assert.match(client, /className: `\$\{ROOT\}-grid`/)
+assert.match(client, /className: `\$\{ROOT\}-card`/)
+assert.match(client, /'data-own': String\(card\.own\)/)
+assert.match(client, /'自研'\)/)
+assert.match(client, /'已生效'\)/)
+assert.match(client, /\[\['all', '全部'\], \['on', '已启用'\], \['off', '已停用'\], \['upd', '有更新'\]\]/)
+assert.match(client, /placeholder: '搜索插件名称、描述或来源…'/)
+assert.match(client, /上次检测/)
+
+// 7b. link 双信号 + 复制更新命令
+assert.match(client, /check\.remoteHasUpdate/)
+assert.match(client, /check\.driftHasUpdate/)
+assert.match(client, /remoteError/)
+assert.match(client, /navigator\.clipboard\.writeText/)
+assert.match(client, /pull --ff-only/)
+assert.match(client, /'复制更新命令'/)
+assert.match(client, /dsh plugin --profile /)
+
+// 8. hits the host routes defined in lib/index.js
 assert.match(client, /\/api\/dsh-opm\/state/)
 assert.match(client, /\/api\/dsh-opm\/refresh/)
 assert.match(client, /\/api\/dsh-opm\/toggle/)
 assert.match(client, /\/api\/dsh-opm\/ack/)
 
-// 8. legacy sidebar approach fully removed
+// 9. legacy sidebar approach fully removed
 assert.doesNotMatch(client, /sidebar\.workspaces/)
 assert.doesNotMatch(client, /\.dws-menu/)
 assert.doesNotMatch(client, /new MutationObserver\(/)
 
-// 9. React prop hygiene: no raw `class:` props (must be className)
+// 10. React prop hygiene: no raw `class:` props (must be className)
 assert.doesNotMatch(client, /\bclass: /)
 
 console.log('client smoke: all ok')

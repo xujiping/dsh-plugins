@@ -34,7 +34,7 @@
 
 ## 当前状态
 
-- 活跃插件（均装于对应 profile）：`dsh-agent-driver`（web，M0 验证中）、`dsh-chat-scroll-nav`（desktop）、`dsh-desktop-pet`（desktop + web）、`dsh-session-archive`（desktop + web）、`dsh-web-sites`（web）、`dsh-own-plugin-manager`（web，自研插件管家：设置对话框「插件管家」分区（`settings.section` slot），profile 插件全景/启停/版本更新监测，改动生效需重启 `dsh web`）。
+- 活跃插件（均装于对应 profile）：`dsh-agent-driver`（web，M0 验证中）、`dsh-chat-scroll-nav`（desktop）、`dsh-desktop-pet`（desktop + web）、`dsh-session-archive`（desktop + web）、`dsh-web-sites`（web）、`dsh-own-plugin-manager`（web，自研插件管家：设置对话框「插件管家」分区（`settings.section` slot），卡片式 UI（对齐 dsh-plugin-manager 视觉体系），自有/社区双 Tab，跨 profile 聚合，启停/版本更新监测（link 类走 GitHub 远端：release 标签 → 分支 package.json 回退 + 本地漂移双信号，repo 从 git remote 推导），改动生效需重启 `dsh web`）。
 - 已删除（2026-09-16，功能被 agent-driver 取代 / 本地未安装，可从 git 历史恢复）：`dsh-new-session-route`（新会话下拉由 agent-driver 内置）、`dsh-llm-agent-bridge`、`dsh-agent-terminal`（旧外挂 agent CLI 方案）、`dsh-global-memory`（本地未安装，npm 已发布 @0.1.0）。
 
 ## 修改文件前置规则（强制）
