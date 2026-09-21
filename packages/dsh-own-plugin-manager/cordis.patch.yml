@@ -1,0 +1,12 @@
+# dsh-own-plugin-manager bundle patch: inserts the plugin into a profile's
+# layer stack. Applied as a profile bundle layer (the `dsh.bundle.patch`
+# manifest field) over dsh-base; activate with `dsh plugin --profile <name>
+# add dsh-own-plugin-manager` (npm) or the monorepo link path.
+#
+# The host half (exports ".") registers loopback-trusted manage routes and a
+# background update checker; the `dsh.client` declaration in package.json
+# makes the browser half (exports "./client") load in the web GUI, where it
+# injects the「插件管理」sidebar entry and the management panel.
+- insert:
+    - id: own-plugin-manager
+      name: 'dsh-own-plugin-manager'

@@ -238,10 +238,6 @@ window.__ModuleLoader__.load({
       return el('div', { class: `${ROOT}-row`, 'data-off': String(info.disabled) }, head, ops, desc)
     }
 
-    function currentSection() {
-      return activeProfile || ''
-    }
-
     function profileSection(profile) {
       const updates = profile.plugins.filter(p => p.check?.hasUpdate).length
       const section = el('div', { class: `${ROOT}-sec` },
