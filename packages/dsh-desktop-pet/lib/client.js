@@ -16,7 +16,8 @@
  *
  *   3. TRIGGERS — three sources pick the next action:
  *        a. autonomous timer  — random idle/walk/sleep wander (AI free will)
- *        b. user interaction  — drag (dangle), click (happy), dblclick (eat)
+ *        b. user interaction  — drag (dangle), click (happy), dblclick (/compact
+ *                               into the current session via the composer)
  *        c. session observer — MutationObserver on [data-chat-flow]:
  *             assistant streaming  -> typing (faces the chat panel)
  *             tool-call rows added -> work   (faces the chat panel)
@@ -81,7 +82,7 @@ window.__ModuleLoader__.load({
       walk:    { loop: true,  duration: [3000, 9000],  autonomous: true },
       sleep:   { loop: true,  duration: [15000, 40000], autonomous: true },
       happy:   { loop: false, duration: 1600, then: 'idle' },
-      eat:     { loop: false, duration: 2400, then: 'happy' },
+      eat:     { loop: false, duration: 2400, then: 'happy' },  // 双击 /compact 的反馈：咀嚼消化上下文
       typing:  { loop: true,  duration: [8000, 20000] },   // AI streaming
       work:    { loop: true,  duration: [6000, 15000] },   // tool running
       dangle:  { loop: true,  duration: [60000, 60000] },  // while dragging
@@ -167,6 +168,7 @@ window.__ModuleLoader__.load({
       dragging: false,
       dragMoved: false,      // 本次按下是否真的拖动了（>4px）；区分「点一下」与「拖走」
       dragOriginX: 0, dragOriginY: 0,   // pointerdown 的屏幕坐标
+      lastDragEnd: 0,        // 上次真实拖拽结束的时间戳（防拖拽误触双击）
       sessionBusyUntil: 0,   // last time we saw streaming / tool activity
       quietCheckTimer: 0,
       rafId: 0,
@@ -663,7 +665,7 @@ body[data-ds-dark-theme] .dpet-root {
       root.id = ROOT_ID
       root.className = 'dpet-root'
       root.setAttribute('data-plugin', 'dsh-desktop-pet')
-      root.title = 'desktop pet — 拖我 · 点我 · 双击喂食'
+      root.title = 'desktop pet — 拖我 · 点我 · 双击压缩上下文(/compact)'
 
       const pet = document.createElement('div')
       pet.className = 'dpet-pet'
@@ -809,6 +811,7 @@ body[data-ds-dark-theme] .dpet-root {
       state.root.dataset.dragging = 'false'
       const moved = state.dragMoved
       state.dragMoved = false
+      if (moved) state.lastDragEnd = Date.now()   // 真拖拽后 0.5s 内的 dblclick 视为误触，不压缩
       // 拖动 = 手动放置：解除停靠，恢复自由漫游（可在菜单里重新开启）。
       // 原地点击（没拖动）保持停靠，否则点一下就把宠物从输入框上踢下来了。
       if (settings.dock) {
@@ -842,8 +845,89 @@ body[data-ds-dark-theme] .dpet-root {
     }
 
     function onDblClick() {
+      if (Date.now() - state.lastDragEnd < 500) return // 刚拖拽完的双击是误触
       if (clickTimer) { clearTimeout(clickTimer); clickTimer = 0 }
-      setAction('eat')
+      triggerCompact()
+    }
+
+    // ------------------------------------------------ dblclick: /compact
+    // 双击宠物 = 对当前会话执行 /compact（压缩上下文）。
+    // 实现：把命令文本注入 GUI 自己的输入框（Lexical 编辑器）并派发回车，
+    // 完全复用官方斜杠命令管线——输入状态机裁定、结果/错误提示都显示在会话
+    // 里（含「agent 忙碌不可压缩」等官方守卫），不依赖 DSH 内部 API。
+    // 宠物侧只负责反馈：咀嚼动画（把上下文“吃掉消化”）+ 气泡提示。
+
+    /** 当前可见输入框里的编辑器根节点；找不到（非会话页）返回 null。 */
+    function composerEditable() {
+      const seat = document.querySelector('[data-composer-seat]')
+      if (!seat) return null
+      const editable = seat.querySelector('[data-lexical-editor="true"]')
+        || seat.querySelector('[contenteditable="true"], [contenteditable=""]')
+      return editable instanceof HTMLElement && editable.offsetParent !== null ? editable : null
+    }
+
+    /** 输入框里的真实草稿文本（剔除 @文件 / 指令 chip 等不可编辑节点）。 */
+    function composerDraft(editable) {
+      const clone = editable.cloneNode(true)
+      clone.querySelectorAll('[contenteditable="false"]').forEach(el => el.remove())
+      return (clone.textContent || '').trim()
+    }
+
+    function insertComposerText(editable, text) {
+      editable.focus({ preventScroll: true })
+      // execCommand 已废弃但触发真实 beforeinput，是 Chromium/WebKit 下最稳的
+      // 注入通道；失败再派发合成 beforeinput（Lexical 原生监听并处理它）。
+      try { document.execCommand('insertText', false, text) } catch { /* 走 fallback */ }
+      if (composerDraft(editable) === text) return true
+      editable.dispatchEvent(new InputEvent('beforeinput', {
+        inputType: 'insertText', data: text, bubbles: true, cancelable: true,
+      }))
+      return composerDraft(editable) === text
+    }
+
+    /** 让输入框提交一条斜杠命令；同步失败抛 NO_COMPOSER / DRAFT_NOT_EMPTY / INSERT_FAILED。 */
+    function submitSlashCommand(text) {
+      const editable = composerEditable()
+      if (!editable) throw new Error('NO_COMPOSER')
+      if (composerDraft(editable).length > 0 || editable.querySelector('[contenteditable="false"]')) {
+        throw new Error('DRAFT_NOT_EMPTY')   // 有草稿/挂着的 chip：绝不覆盖用户未发送的内容
+      }
+      if (!insertComposerText(editable, text)) throw new Error('INSERT_FAILED')
+      // 稍等编辑器状态落地后派发回车：输入状态机裁定为 /compact 并执行。
+      setTimeout(() => {
+        editable.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'Enter', code: 'Enter', bubbles: true, cancelable: true,
+        }))
+      }, 30)
+    }
+
+    let bubbleTimer = 0
+    function showTransientBubble(text, ms = 2400) {
+      if (!state.bubble) return
+      state.bubble.textContent = text
+      state.bubble.dataset.show = 'true'
+      clearTimeout(bubbleTimer)
+      bubbleTimer = setTimeout(() => {
+        if (state.bubble) state.bubble.dataset.show = 'false'
+      }, ms)
+    }
+
+    let compactBusy = false
+    function triggerCompact() {
+      if (compactBusy) return
+      compactBusy = true
+      setAction('eat')                       // 咀嚼动画：吃掉旧上下文
+      showTransientBubble('🧹 压缩上下文…', 2600)
+      try {
+        submitSlashCommand('/compact')
+      } catch (error) {
+        if (error.message === 'NO_COMPOSER') showTransientBubble('💬 没找到输入框')
+        else if (error.message === 'DRAFT_NOT_EMPTY') showTransientBubble('✋ 输入框有草稿')
+        else showTransientBubble('⚠️ 触发失败')
+        console.warn('[dsh-desktop-pet] /compact trigger failed:', error.message)
+      } finally {
+        setTimeout(() => { compactBusy = false }, 2000)
+      }
     }
 
     // -------------------------------------------------- hover balance card
@@ -1326,6 +1410,10 @@ body[data-ds-dark-theme] .dpet-root {
 
     const QUICK_ACTIONS = [
       {
+        label: '🧹 压缩上下文', hint: '/compact',
+        run: triggerCompact,
+      },
+      {
         label: '⏻ 重启 DSH Web', hint: '中断任务',
         run: restartWeb,
       },
@@ -1555,6 +1643,7 @@ body[data-ds-dark-theme] .dpet-root {
       if (state.sessionObserver) state.sessionObserver.disconnect()
       if (state.rafId) cancelAnimationFrame(state.rafId)
       if (clickTimer) clearTimeout(clickTimer)
+      clearTimeout(bubbleTimer)
       clearTimeout(tipHideTimer)
       tipEl?.remove()
       tipEl = null
