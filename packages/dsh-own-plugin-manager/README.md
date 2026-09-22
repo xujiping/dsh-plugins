@@ -60,6 +60,25 @@ link 类为**双信号**，互不掩盖：
   「有更新」筛选与卡片徽标实时显示可用更新数。
 - GitHub API 无认证限流（60 次/小时）：默认间隔下每轮十几个请求，安全。
 
+### 关注仓库源（社区插件浏览 + 一键安装）
+
+社区插件没有官方市场，都是社区维护。可在社区 Tab 顶部**添加关注的 GitHub 插件仓库**
+（如 `veildawn/dsh-plugins`），插件管家会自动：
+
+- **发现该仓库发布的插件**：拉 GitHub releases 列表，解析 `<pkg>@vX.Y.Z` 形式的
+  tag（monorepo 模式）→ 插件名 + 最新版本 + tgz 下载地址；若无这种 tag，回退读
+  默认分支根 `package.json`（单插件仓库模式）。
+- **社区列表展示**：发现的插件即使未安装也会出现在社区 Tab（「仓库」徽标 +
+  「未安装」），已安装的插件仍走常规卡片（更新检测覆盖）。
+- **一键安装 / 更新**：未安装插件点「安装」，已安装且有新版点「更新」——
+  host 侧 spawn `dsh plugin --profile <p> add <spec>`（monorepo 用 tgz URL、
+  单插件仓库用 `github:owner/repo`），安装成功后自动刷新检测。desktop profile
+  为只读（Electron 独占 + 手动接线），只提供「复制安装命令」。
+- **定期检测**：仓库快照随后台定时轮询一起刷新（`DSH_OPM_CHECK_MAX_AGE_MIN`
+  控制单仓库缓存有效期），也可手动「重新探测」。
+
+仓库源配置落盘 `~/.dsh/plugin-repos.json`（`DSH_OPM_REPOS` 可覆盖）。
+
 ## 对话式管理（AI 会话可直接 curl）
 
 所有路由仅限本机同源（回环信任围栏）：
@@ -80,6 +99,20 @@ curl -s -X POST http://127.0.0.1:3080/api/dsh-opm/toggle \
 # link 插件基线对齐（重启生效后清除「源码已更新」提醒）
 curl -s -X POST http://127.0.0.1:3080/api/dsh-opm/ack \
   -H 'content-type: application/json' -d '{"profile":"web","plugin":"dsh-web-sites"}'
+
+# 关注仓库源：列表 / 添加 / 移除 / 重新探测
+curl -s http://127.0.0.1:3080/api/dsh-opm/repos | jq '.repos[] | {repo, plugins: [.plugins[].pkg]}'
+curl -s -X POST http://127.0.0.1:3080/api/dsh-opm/repos/add \
+  -H 'content-type: application/json' -d '{"url":"veildawn/dsh-plugins"}' | jq
+curl -s -X POST http://127.0.0.1:3080/api/dsh-opm/repos/remove \
+  -H 'content-type: application/json' -d '{"repo":"veildawn/dsh-plugins"}'
+curl -s -X POST http://127.0.0.1:3080/api/dsh-opm/repos/refresh \
+  -H 'content-type: application/json' -d '{"force":true}' | jq
+
+# 一键安装/更新（spec 可以是 tgz URL 或 github:owner/repo）
+curl -s -X POST http://127.0.0.1:3080/api/dsh-opm/install \
+  -H 'content-type: application/json' \
+  -d '{"profile":"web","spec":"https://github.com/veildawn/dsh-plugins/releases/download/dsh-ai-proxy%40v0.3.4/dsh-ai-proxy-0.3.4.tgz"}' | jq
 ```
 
 ## 安装
@@ -100,9 +133,10 @@ desktop profile（Electron 独占管理，CLI 拒绝操作）用手动接线：�
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
 | `DSH_OPM_INTERVAL_MIN` | `360` | 后台自动检测间隔（分钟），0 关闭 |
-| `DSH_OPM_CHECK_MAX_AGE_MIN` | `360` | 单插件检测缓存有效期（分钟） |
+| `DSH_OPM_CHECK_MAX_AGE_MIN` | `360` | 单插件/单仓库检测缓存有效期（分钟） |
 | `DSH_OPM_OWN_REPO` | link 目录 `git remote` 自动推导 | link（自有）插件远端检测的 GitHub 仓库（owner/repo） |
 | `DSH_OPM_STATE` | `~/.dsh/plugin-versions.json` | 状态文件路径 |
+| `DSH_OPM_REPOS` | `~/.dsh/plugin-repos.json` | 关注仓库源配置文件路径 |
 | `DSH_OPM_HOME` | `~/.dsh` | DSH 根目录（测试隔离用） |
 
 ## 设计说明
@@ -124,9 +158,17 @@ desktop profile（Electron 独占管理，CLI 拒绝操作）用手动接线：�
   「与上次检测基线相比发生变化」；发现变化不立即重置基线，徽标持续提醒直到
   用户确认重启生效（ack），避免提醒一闪而过。
 - **desktop profile 只读检测**：Electron 独占管理只挡 CLI 写操作，本插件对
-  desktop 的启停/检测走文件层（读写 `~/.dsh/profiles/desktop/*`），完全可用。
+  desktop 的启停/检测走文件层（读写 `~/.dsh/profiles/desktop/*`），完全可用；
+  一键安装走 `dsh plugin add`（desktop 为手动接线），故 desktop 只给复制命令。
+- **仓库源发现语义**：monorepo 模式靠 releases tags（`<pkg>@vX.Y.Z`）识别插件
+  与最新版，tgz URL 按 DSH release 惯例拼装（不逐个请求 release 资产，省配额）；
+  单插件仓库回退读默认分支根 package.json。快照入状态文件随后台轮询刷新，
+  已安装关联按包名匹配（跨 profile）。
+- **一键安装的信任边界**：install 路由与其它路由同走回环信任围栏；spawn
+  `dsh plugin --profile <p> add <spec>`（dsh 可执行文件按 PATH + 常见目录探测），
+  失败透出 pnpm stderr 尾部（如 allowBuilds 提示），不抛异常不拖垮进程。
 - **零依赖**：host 半边只用 Node 内置模块；网络走全局 `fetch`（undici），
-  超时 8s；测试可注入 `fetchFn` / `now` 全量离线跑。
+  超时 8s；测试可注入 `fetchFn` / `now` / `spawn` 全量离线跑。
 
 ## 测试
 
@@ -136,9 +178,12 @@ node test/smoke.mjs
 
 覆盖：来源解析、semver 比较、patchYml 行级启停（注释保留/幂等/追加）、
 profile 扫描（fixture）、四类检测器（注入 fake fetch）、状态读写原子性、
-路由围栏与各 handler、client 静态断言（settings.section 注册 / token 配色 /
-无渐变 / 自有社区双 Tab / 无旧侧边栏残留）、client 运行时冒烟（stub react +
-document，有状态渲染：Tab 切换 / 状态筛选 / profile 过滤 / 空态）。
+仓库源 CRUD（parseRepoUrl/add/remove）、仓库插件发现（monorepo tags /
+单插件回退 / 网络失败）、refreshRepos 缓存、buildView 已安装关联、
+runInstall（fake spawn 成功/失败）、路由围栏与各 handler、client 静态断言
+（settings.section 注册 / token 配色 / 无渐变 / 自有社区双 Tab / 仓库源 UI /
+无旧侧边栏残留）、client 运行时冒烟（stub react + document，有状态渲染：
+Tab 切换 / 状态筛选 / profile 过滤 / 仓库发现卡片 / 空态）。
 
 ```bash
 node test/smoke.mjs

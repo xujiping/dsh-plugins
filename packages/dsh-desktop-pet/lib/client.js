@@ -537,6 +537,21 @@ body[data-ds-dark-theme] .dpet-root {
   border-top: 1px solid var(--dsw-alias-border-l2);
   margin-top: 4px;
 }
+.dpet-menu-item .dpet-act-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.dpet-menu-item .dpet-act-icon {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  font-size: 12px;
+  line-height: 1;
+}
 .dpet-menu-item .dpet-act {
   font-size: 11px;
   opacity: 0.5;
@@ -873,27 +888,60 @@ body[data-ds-dark-theme] .dpet-root {
       return (clone.textContent || '').trim()
     }
 
-    function insertComposerText(editable, text) {
+    /** 对话区是否忙碌：agent 正在生成（出现停止按钮），或输入机正处于提交/裁定阶段。 */
+    function conversationBusy() {
+      const seat = document.querySelector('[data-composer-seat]')
+      if (!seat) return false
+      // 停止按钮出现即代表 agent 正在生成；aria-label 中英双匹配 + 停止图标
+      // 结构（svg 内 10×10 rx=3 方块）双保险，不依赖界面语言。
+      for (const b of seat.querySelectorAll('button')) {
+        if (b.disabled) continue
+        const label = (b.getAttribute('aria-label') || '').trim()
+        if (label === '停止生成' || label === 'Stop generating') return true
+        if (b.querySelector('svg rect[width="10"][height="10"][rx="3"]')) return true
+      }
+      // 刚回车那几十毫秒输入机处于裁定/提交中，也算忙碌
+      const editable = seat.querySelector('[data-lexical-editor="true"], [contenteditable="true"], [contenteditable=""]')
+      const phase = editable ? (editable.getAttribute('data-phase') || '') : ''
+      return phase === 'adjudicating' || phase === 'submitting'
+    }
+
+    /** 等编辑器把 beforeinput 引发的模型变更落到 DOM（微任务/下一帧均覆盖）。 */
+    function flushEditable() {
+      return new Promise(resolve => {
+        let done = false
+        const finish = () => { if (!done) { done = true; resolve() } }
+        requestAnimationFrame(finish)
+        setTimeout(finish, 50)   // rAF 被节流时兜底
+      })
+    }
+
+    async function insertComposerText(editable, text) {
       editable.focus({ preventScroll: true })
       // execCommand 已废弃但触发真实 beforeinput，是 Chromium/WebKit 下最稳的
-      // 注入通道；失败再派发合成 beforeinput（Lexical 原生监听并处理它）。
+      // 注入通道。Lexical 落盘不保证同步：必须先等一帧再验证，验证不到且框内
+      // 仍为空才走合成 beforeinput 兜底——否则两个通道各插一次，命令文本翻倍。
       try { document.execCommand('insertText', false, text) } catch { /* 走 fallback */ }
-      if (composerDraft(editable) === text) return true
+      await flushEditable()
+      const draft = composerDraft(editable)
+      if (draft === text) return true
+      if (draft !== '') return false          // 已有内容：绝不二次注入
       editable.dispatchEvent(new InputEvent('beforeinput', {
         inputType: 'insertText', data: text, bubbles: true, cancelable: true,
       }))
+      await flushEditable()
       return composerDraft(editable) === text
     }
 
-    /** 让输入框提交一条斜杠命令；同步失败抛 NO_COMPOSER / DRAFT_NOT_EMPTY / INSERT_FAILED。 */
-    function submitSlashCommand(text) {
+    /** 让输入框提交一条斜杠命令；失败抛 NO_COMPOSER / DRAFT_NOT_EMPTY / INSERT_FAILED。 */
+    async function submitSlashCommand(text) {
       const editable = composerEditable()
       if (!editable) throw new Error('NO_COMPOSER')
       if (composerDraft(editable).length > 0 || editable.querySelector('[contenteditable="false"]')) {
         throw new Error('DRAFT_NOT_EMPTY')   // 有草稿/挂着的 chip：绝不覆盖用户未发送的内容
       }
-      if (!insertComposerText(editable, text)) throw new Error('INSERT_FAILED')
-      // 稍等编辑器状态落地后派发回车：输入状态机裁定为 /compact 并执行。
+      if (!await insertComposerText(editable, text)) throw new Error('INSERT_FAILED')
+      // 输入已确认在框，派发回车：输入状态机裁定为 /compact 并执行。
       setTimeout(() => {
         editable.dispatchEvent(new KeyboardEvent('keydown', {
           key: 'Enter', code: 'Enter', bubbles: true, cancelable: true,
@@ -913,16 +961,24 @@ body[data-ds-dark-theme] .dpet-root {
     }
 
     let compactBusy = false
-    function triggerCompact() {
+    async function triggerCompact() {
       if (compactBusy) return
+      // 前置门槛：输入框存在 + 对话空闲 + 输入框为空，三者齐备才允许压缩，避免误触
+      const editable = composerEditable()
+      if (!editable) { showTransientBubble('💬 没找到输入框'); return }
+      if (conversationBusy()) { showTransientBubble('⏳ 对话生成中，稍后再压缩'); return }
+      if (composerDraft(editable).length > 0 || editable.querySelector('[contenteditable="false"]')) {
+        showTransientBubble('✋ 输入框有草稿，先清空再压缩')
+        return
+      }
       compactBusy = true
       setAction('eat')                       // 咀嚼动画：吃掉旧上下文
       showTransientBubble('🧹 压缩上下文…', 2600)
       try {
-        submitSlashCommand('/compact')
+        await submitSlashCommand('/compact')
       } catch (error) {
         if (error.message === 'NO_COMPOSER') showTransientBubble('💬 没找到输入框')
-        else if (error.message === 'DRAFT_NOT_EMPTY') showTransientBubble('✋ 输入框有草稿')
+        else if (error.message === 'DRAFT_NOT_EMPTY') showTransientBubble('✋ 输入框有草稿，先清空再压缩')
         else showTransientBubble('⚠️ 触发失败')
         console.warn('[dsh-desktop-pet] /compact trigger failed:', error.message)
       } finally {
@@ -1107,10 +1163,17 @@ body[data-ds-dark-theme] .dpet-root {
 
     // ------------------------------------------------------- config menu
     let menuEl = null
+    // 菜单外的 pointerdown 监听：生命周期与菜单绑定（openMenu 注册 / closeMenu 摘除），
+    // 任何路径的重开（开关/分段切换）都能重新挂上，杜绝“点外面关不掉”。
+    let menuDocDown = null
 
     function closeMenu() {
       menuEl?.remove()
       menuEl = null
+      if (menuDocDown) {
+        document.removeEventListener('pointerdown', menuDocDown, true)
+        menuDocDown = null
+      }
     }
 
     function segRow(label, key, presets, names) {
@@ -1229,8 +1292,8 @@ body[data-ds-dark-theme] .dpet-root {
       div.className = 'dpet-menu-div'
       div.textContent = '⚡ 快捷操作'
       menuEl.append(div)
-      QUICK_ACTIONS.forEach(({ label, hint, run }) => {
-        menuEl.append(actRow(label, hint, run))
+      QUICK_ACTIONS.forEach(({ icon, label, hint, run }) => {
+        menuEl.append(actRow(icon, label, hint, run))
       })
       // clamp menu fully inside the viewport using its REAL size
       // (menu grew with the quick-action section; measure after append)
@@ -1250,20 +1313,32 @@ body[data-ds-dark-theme] .dpet-root {
       }
       menuEl.style.left = `${Math.max(8, x)}px`
       menuEl.style.top = `${y}px`
+      // 点菜单外任意处收起；菜单每次（重）打开都重新挂上，点菜单内部不摘除。
+      menuDocDown = (e) => {
+        if (menuEl && !menuEl.contains(e.target)) closeMenu()
+      }
+      document.addEventListener('pointerdown', menuDocDown, true)
     }
 
     // ------------------------------------------------------- quick actions
     // 右键菜单快捷操作；重启调用 Host 接口。
 
-    function actRow(label, hint, run) {
+    function actRow(icon, label, hint, run) {
       const row = document.createElement('div')
       row.className = 'dpet-menu-item'
+      // 图标锁进固定盒子居中：emoji 天然大小/基线不一，不锁盒子就会忽大忽小。
+      const lead = document.createElement('span')
+      lead.className = 'dpet-act-label'
+      const iconEl = document.createElement('span')
+      iconEl.className = 'dpet-act-icon'
+      iconEl.textContent = icon
       const name = document.createElement('span')
       name.textContent = label
+      lead.append(iconEl, name)
       const tag = document.createElement('span')
       tag.className = 'dpet-act'
       tag.textContent = hint
-      row.append(name, tag)
+      row.append(lead, tag)
       row.addEventListener('click', () => {
         closeMenu()
         setAction('happy')
@@ -1410,15 +1485,15 @@ body[data-ds-dark-theme] .dpet-root {
 
     const QUICK_ACTIONS = [
       {
-        label: '🧹 压缩上下文', hint: '/compact',
+        icon: '🧹', label: '压缩上下文', hint: '/compact',
         run: triggerCompact,
       },
       {
-        label: '⏻ 重启 DSH Web', hint: '中断任务',
+        icon: '🔄', label: '重启 DSH Web', hint: '中断任务',
         run: restartWeb,
       },
       {
-        label: '📋 复制调试信息', hint: '',
+        icon: '📋', label: '复制调试信息', hint: '',
         run: async () => {
           const info = JSON.stringify({
             plugin: 'dsh-desktop-pet',
@@ -1441,11 +1516,6 @@ body[data-ds-dark-theme] .dpet-root {
       ev.preventDefault()
       ev.stopPropagation()
       openMenu()
-      const onDocDown = (e) => {
-        if (menuEl && !menuEl.contains(e.target)) closeMenu()
-        document.removeEventListener('pointerdown', onDocDown, true)
-      }
-      document.addEventListener('pointerdown', onDocDown, true)
     }
 
     // ------------------------------------------- trigger c: session observer

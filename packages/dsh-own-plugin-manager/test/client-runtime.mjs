@@ -194,6 +194,40 @@ tree = render(reg.comp())
 assert.equal(byClass(tree, 'opm-card').length, 0)
 assert.match(texts(tree).join('|'), /没有匹配的插件/)
 
+// 5d2. 社区 Tab + 关注仓库：仓库发现的未安装插件出现在列表（仓库源卡片 + 安装按钮）
+const repoView = {
+  profiles: view.profiles,
+  updateCount: view.updateCount,
+  checkedAt: view.checkedAt,
+  repos: [{
+    repo: 'veildawn/dsh-plugins',
+    mode: 'monorepo',
+    checkedAt: view.checkedAt,
+    plugins: [
+      { pkg: 'dsh-remote-plugin', version: '0.9.0', tgzUrl: 'https://github.com/veildawn/dsh-plugins/releases/download/dsh-remote-plugin%40v0.9.0/dsh-remote-plugin-0.9.0.tgz', repo: 'veildawn/dsh-plugins' },
+    ],
+    installed: { 'dsh-remote-plugin': [{ profile: 'desktop', version: '0.8.0' }] },
+  }],
+}
+hookStates[0] = repoView
+hookStates[1] = ''
+hookStates[2] = 'community'
+hookStates[3] = 'all'
+tree = render(reg.comp())
+assert.match(texts(tree).join('|'), /关注仓库源/)
+assert.match(texts(tree).join('|'), /veildawn\/dsh-plugins/)
+assert.match(texts(tree).join('|'), /dsh-remote-plugin/)
+assert.match(texts(tree).join('|'), /v0\.9\.0/)
+assert.match(texts(tree).join('|'), /复制安装命令/)
+assert.match(texts(tree).join('|'), /安装/)
+// 已安装的 dsh-bar 常规卡片仍展示（社区 Tab 合并）
+cards = byClass(tree, 'opm-card')
+assert.ok(cards.some(c => texts(c).join('|').includes('dsh-bar')), 'installed community card still shown')
+const repoCards = byClass(tree, 'opm-card').concat(byClass(tree, 'opm-card repo'))
+assert.ok(repoCards.some(c => texts(c).join('|').includes('dsh-remote-plugin')), 'repo-discovered card shown')
+// 仓库源管理卡存在
+assert.ok(byClass(tree, 'opm-repos').length >= 1, 'repo source card rendered')
+
 // 5e. profile 过滤 web + 自有 Tab + 「已停用」→ 空（web 里自研包启用中）
 hookStates[1] = 'web'
 hookStates[2] = 'own'

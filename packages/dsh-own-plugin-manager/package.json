@@ -1,7 +1,7 @@
 {
   "name": "dsh-own-plugin-manager",
-  "version": "0.4.0",
-  "description": "DSH 自研插件管家：集中查看各 profile 已装插件（来源/版本/启停/自研标记），一键启停（行级 patch cordis.patch.yml，保留注释），并自动监测版本更新 —— npm registry、GitHub 仓库、GitHub release 包、link 本地源码（GitHub 远端最新版 + 本地漂移双信号）四类来源全覆盖，定时轮询 + 手动刷新，卡片式 UI 自有/社区双 Tab。",
+  "version": "0.5.0",
+  "description": "DSH 自研插件管家：集中查看各 profile 已装插件（来源/版本/启停/自研标记），一键启停（行级 patch cordis.patch.yml，保留注释），关注 GitHub 插件仓库源浏览社区插件并一键安装，自动监测版本更新 —— npm registry、GitHub 仓库、GitHub release 包、link 本地源码（GitHub 远端最新版 + 本地漂移双信号）四类来源全覆盖，定时轮询 + 手动刷新，卡片式 UI 自有/社区双 Tab。",
   "keywords": [
     "deepseek",
     "harness",

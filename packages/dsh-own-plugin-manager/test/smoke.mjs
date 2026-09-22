@@ -34,6 +34,8 @@ import {
   parsePatchDisables, togglePluginInPatchYml,
   listProfiles, readProfileState,
   readState, writeState, statePath,
+  reposPath, readRepos, writeRepos, addRepo, removeRepo, parseRepoUrl,
+  discoverRepoPlugins, refreshRepos, resolveDshBin, runInstall,
   checkNpm, checkGithub, checkTarball, readLinkFingerprint,
   resolveGitRepo, repoSubpath, checkLink,
   refreshProfile, ackLink, buildView,
@@ -82,6 +84,141 @@ import { apply, trusted } from '../lib/index.js'
   assert.equal(other.type, 'other')
 
   console.log('parseSource ok')
+}
+
+// ------------------------------------------------------------ repo sources
+{
+  // parseRepoUrl：三种输入归一
+  assert.deepEqual(parseRepoUrl('owner/repo'), { owner: 'owner', name: 'repo', key: 'owner/repo' })
+  assert.deepEqual(parseRepoUrl('https://github.com/veildawn/dsh-plugins'), { owner: 'veildawn', name: 'dsh-plugins', key: 'veildawn/dsh-plugins' })
+  assert.deepEqual(parseRepoUrl('github:csyangwen/dsh-memory-evolve'), { owner: 'csyangwen', name: 'dsh-memory-evolve', key: 'csyangwen/dsh-memory-evolve' })
+  assert.equal(parseRepoUrl('https://gitlab.com/x/y'), null)
+  assert.equal(parseRepoUrl('not-a-repo'), null)
+
+  // addRepo / removeRepo：round-trip + 幂等 + 落盘
+  const dir = mkdtempSync(join(tmpdir(), 'opm-repos-'))
+  const repoFile = join(dir, 'repos.json')
+  let repos = addRepo('veildawn/dsh-plugins', [], repoFile)
+  assert.equal(repos.length, 1)
+  assert.equal(repos[0].repo, 'veildawn/dsh-plugins')
+  assert.equal(addRepo('https://github.com/veildawn/dsh-plugins', repos, repoFile).length, 1, '重复添加幂等')
+  assert.equal(readRepos(repoFile).length, 1)
+  assert.equal(removeRepo('veildawn/dsh-plugins', readRepos(repoFile), repoFile), true)
+  assert.equal(readRepos(repoFile).length, 0)
+  assert.equal(removeRepo('nope/nope', readRepos(repoFile), repoFile), false)
+  rmSync(dir, { recursive: true, force: true })
+  console.log('repo sources ok')
+}
+
+// ------------------------------------------------------ repo plugin discovery
+{
+  // 主模式（monorepo）：releases tags 解析 `<pkg>@vX.Y.Z`
+  const fetchFn = async url => {
+    if (url.includes('/releases?per_page=100')) {
+      return {
+        ok: true,
+        json: async () => [
+          { tag_name: 'dsh-plugin-manager@v0.3.20', draft: false },
+          { tag_name: 'dsh-ai-proxy@v0.3.4', draft: false },
+          { tag_name: 'dsh-ai-proxy@v0.2.9', draft: false },
+          { tag_name: 'not-a-plugin-tag', draft: false },
+          { tag_name: 'dsh-foo@v1.0.0', draft: true }, // draft 忽略
+        ],
+      }
+    }
+    throw new Error(`unexpected fetch: ${url}`)
+  }
+  const mono = await discoverRepoPlugins('veildawn/dsh-plugins', { fetchFn })
+  assert.equal(mono.mode, 'monorepo')
+  assert.equal(mono.plugins.length, 2)
+  const byName = Object.fromEntries(mono.plugins.map(p => [p.pkg, p]))
+  assert.equal(byName['dsh-ai-proxy'].version, '0.3.4') // 取最高版本
+  assert.equal(byName['dsh-ai-proxy'].tgzUrl, 'https://github.com/veildawn/dsh-plugins/releases/download/dsh-ai-proxy%40v0.3.4/dsh-ai-proxy-0.3.4.tgz')
+  assert.equal(byName['dsh-plugin-manager'].version, '0.3.20')
+
+  // 回退模式（单插件仓库）：无 `<pkg>@` tag → 读默认分支根 package.json
+  const fetchSingle = async url => {
+    if (url.includes('/repos/solo/repo')) {
+      return { ok: true, json: async () => ({ default_branch: 'main' }) }
+    }
+    if (url.includes('raw.githubusercontent.com/solo/repo/main/package.json')) {
+      return { ok: true, json: async () => ({ name: 'dsh-solo', version: '0.5.0' }) }
+    }
+    throw new Error(`unexpected fetch: ${url}`)
+  }
+  const single = await discoverRepoPlugins('solo/repo', { fetchFn: fetchSingle })
+  assert.equal(single.mode, 'single')
+  assert.equal(single.plugins.length, 1)
+  assert.equal(single.plugins[0].pkg, 'dsh-solo')
+  assert.equal(single.plugins[0].spec, 'github:solo/repo')
+
+  // 网络失败：plugins 空、error 记录、不抛
+  const fail = await discoverRepoPlugins('x/y', { fetchFn: async () => { throw new Error('boom') } })
+  assert.equal(fail.plugins.length, 0)
+  assert.match(fail.error, /boom/)
+
+  // refreshRepos：快照并入状态 + 缓存生效（force 控制）
+  const st = { profiles: {}, repos: {} }
+  const { state: st2 } = await refreshRepos(st, [{ repo: 'veildawn/dsh-plugins' }], { fetchFn, now: 1000 })
+  assert.equal(st2.repos['veildawn/dsh-plugins'].plugins.length, 2)
+  assert.equal(st2.repos['veildawn/dsh-plugins'].checkedAt, new Date(1000).toISOString())
+  // 未过期则走缓存（不触发网络）
+  let called = false
+  const { state: st3 } = await refreshRepos(st2, [{ repo: 'veildawn/dsh-plugins' }], { fetchFn: async () => { called = true; throw new Error('should not hit') }, now: 1000 + 60_000 })
+  assert.equal(called, false)
+  assert.equal(st3.repos['veildawn/dsh-plugins'].plugins.length, 2)
+
+  // buildView 附带 repos（关联已安装）
+  const home2 = mkdtempSync(join(tmpdir(), 'opm-home-'))
+  const repoFile2 = join(home2, 'repos.json')
+  mkdirSync(join(home2, 'profiles', 'web'), { recursive: true })
+  writeFileSync(join(home2, 'profiles', 'web', 'package.json'), JSON.stringify({
+    name: 'dsh-profile-web', private: true,
+    dependencies: {
+      'dsh-ai-proxy': 'https://github.com/veildawn/dsh-plugins/releases/download/dsh-ai-proxy%40v0.3.4/dsh-ai-proxy-0.3.4.tgz',
+    },
+    dsh: { profile: { bundles: ['dsh-ai-proxy'] } },
+  }), 'utf8')
+  writeFileSync(repoFile2, JSON.stringify({ version: 1, repos: [{ repo: 'veildawn/dsh-plugins', addedAt: 'x' }] }), 'utf8')
+  process.env.DSH_OPM_REPOS = repoFile2
+  const view = buildView(home2, { state: st3, profiles: ['web'] })
+  const repoView = view.repos[0]
+  assert.equal(repoView.repo, 'veildawn/dsh-plugins')
+  assert.equal(repoView.plugins.length, 2)
+  assert.deepEqual(repoView.installed['dsh-ai-proxy'], [{ profile: 'web', version: '0.3.4' }])
+  assert.equal('dsh-plugin-manager' in repoView.installed, false)
+  delete process.env.DSH_OPM_REPOS
+  rmSync(home2, { recursive: true, force: true })
+  console.log('repo discovery ok')
+}
+
+// ----------------------------------------------------------------- install
+{
+  // resolveDshBin：注入 PATH 探测
+  const bin = resolveDshBin({ PATH: '' })
+  // 真实机器上可能在 /opt/homebrew/bin 命中，无法断言非空；只断言函数可调用
+  assert.equal(typeof bin, 'string' || 'null')
+
+  // runInstall：注入 fake spawn，验证参数与成功/失败分支
+  let spawned = null
+  const fakeSpawn = (cmd, args, opts) => {
+    spawned = { cmd, args, opts }
+    return { status: 0, stdout: 'installed ok', stderr: '', error: undefined }
+  }
+  const ok = runInstall('web', 'dsh-ai-proxy@0.3.4', { spawn: fakeSpawn })
+  assert.equal(ok.ok, true)
+  assert.ok(spawned.args.includes('plugin'))
+  assert.ok(spawned.args.includes('web'))
+  assert.ok(spawned.args.includes('add'))
+  assert.ok(spawned.args.includes('dsh-ai-proxy@0.3.4'))
+
+  // 失败分支：非零 exit → stderrTail
+  const fakeFail = (cmd, args, opts) => ({ status: 1, stdout: '', stderr: 'pnpm failed: allowBuilds\n', error: undefined })
+  const fail = runInstall('web', 'x', { spawn: fakeFail })
+  assert.equal(fail.ok, false)
+  assert.match(fail.error, /allowBuilds/)
+  assert.match(fail.stderrTail, /allowBuilds/)
+  console.log('install ok')
 }
 
 // ---------------------------------------------------------- compareVersions
@@ -507,7 +644,7 @@ async function callHandler(handler, { method = 'GET', body = null, address = '12
     effect: fn => { const dispose = fn(); return dispose },
   }
   apply(fakeCtx)
-  assert.equal(routes.size, 4)
+  assert.equal(routes.size, 9)
 
   // trust fence
   assert.equal(trusted(request()), true)
@@ -566,6 +703,27 @@ async function callHandler(handler, { method = 'GET', body = null, address = '12
   const goodAck = await callHandler(routes.get('/api/dsh-opm/ack'), { method: 'POST', body: { profile: 'web', plugin: 'dsh-foo' } })
   assert.equal(goodAck.status, 200)
   assert.equal(readState(stateFile).profiles.web.plugins['dsh-foo'].hasUpdate, false)
+
+  // repos 路由：GET 空列表
+  const reposEmpty = await callHandler(routes.get('/api/dsh-opm/repos'))
+  assert.equal(reposEmpty.status, 200)
+  assert.equal(reposEmpty.payload.repos.length, 0)
+
+  // repos/add：非法 URL -> 400
+  const reposBad = await callHandler(routes.get('/api/dsh-opm/repos/add'), { method: 'POST', body: { url: 'not-a-repo' } })
+  assert.equal(reposBad.status, 400)
+
+  // repos/remove：不存在 -> 400
+  const reposRmBad = await callHandler(routes.get('/api/dsh-opm/repos/remove'), { method: 'POST', body: { repo: 'nope/nope' } })
+  assert.equal(reposRmBad.status, 400)
+
+  // install 路由：desktop 之外的 profile 若 spawn 失败（无 dsh bin / 测试环境）也应回 200 且 ok:false
+  const installRes = await callHandler(routes.get('/api/dsh-opm/install'), { method: 'POST', body: { profile: 'web', spec: 'dsh-ai-proxy@0.3.4' } })
+  assert.equal(installRes.status, 200)
+  assert.equal(typeof installRes.payload.ok, 'boolean')
+  // install 参数缺失 -> 400
+  const installBad = await callHandler(routes.get('/api/dsh-opm/install'), { method: 'POST', body: { profile: 'web' } })
+  assert.equal(installBad.status, 400)
 
   rmSync(home, { recursive: true, force: true })
   delete process.env.DSH_OPM_HOME

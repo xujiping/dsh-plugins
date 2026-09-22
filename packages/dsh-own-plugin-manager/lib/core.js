@@ -19,7 +19,7 @@
  *
  * 所有时间参数都可注入（now），所有网络访问都可注入（fetchFn），零依赖。
  */
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -41,6 +41,11 @@ export function statePath() {
 /** 默认 DSH 根目录：~/.dsh（DSH_OPM_HOME 可覆盖，测试用）。 */
 export function dshHome() {
   return process.env.DSH_OPM_HOME || join(homedir(), '.dsh')
+}
+
+/** 仓库源配置文件路径（DSH_OPM_REPOS 可覆盖，测试用）。 */
+export function reposPath() {
+  return process.env.DSH_OPM_REPOS || join(dshHome(), 'plugin-repos.json')
 }
 
 // ------------------------------------------------------------ source parsing
@@ -264,6 +269,184 @@ export function writeState(state, path = statePath()) {
   writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf8')
   renameSync(tmp, path)
   return state
+}
+
+// ------------------------------------------------------------ repo sources
+
+/** 仓库源配置：`[{ repo: 'owner/name', addedAt }]`。缺失/损坏返回空列表。 */
+export function readRepos(path = reposPath()) {
+  try {
+    const data = JSON.parse(readFileSync(path, 'utf8'))
+    if (Array.isArray(data)) return data
+    if (Array.isArray(data?.repos)) return data.repos
+  } catch { /* 缺失/损坏 */ }
+  return []
+}
+
+/** 原子写仓库源配置。 */
+export function writeRepos(repos, path = reposPath()) {
+  mkdirSync(dirname(path), { recursive: true })
+  const tmp = `${path}.tmp-${process.pid}`
+  writeFileSync(tmp, JSON.stringify({ version: 1, repos }, null, 2), 'utf8')
+  renameSync(tmp, path)
+  return repos
+}
+
+/** 归一化仓库输入：`owner/name`、`https://github.com/owner/name`、`github:owner/name`
+ *  → `{ owner, name, key: 'owner/name' }`；非 GitHub 仓库返回 null。 */
+export function parseRepoUrl(input) {
+  const spec = String(input ?? '').trim()
+  const m = /^(?:https?:\/\/github\.com\/|github:)?([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(spec)
+  if (!m) return null
+  return { owner: m[1], name: m[2], key: `${m[1]}/${m[2]}` }
+}
+
+/** 添加仓库源（已存在返回 false）；返回更新后的列表。 */
+export function addRepo(input, repos = readRepos(), path = reposPath()) {
+  const parsed = parseRepoUrl(input)
+  if (!parsed) throw new Error(`无法识别的 GitHub 仓库地址：${input}`)
+  if (repos.some(r => r.repo === parsed.key)) return repos
+  const next = [...repos, { repo: parsed.key, addedAt: new Date().toISOString() }]
+  writeRepos(next, path)
+  return next
+}
+
+/** 移除仓库源；不存在返回 false。 */
+export function removeRepo(key, repos = readRepos(), path = reposPath()) {
+  const next = repos.filter(r => r.repo !== key)
+  if (next.length === repos.length) return false
+  writeRepos(next, path)
+  return true
+}
+
+// ------------------------------------------------------ repo plugin discovery
+
+/**
+ * 发现一个 GitHub 仓库发布的 DSH 插件。
+ *
+ * 主模式（monorepo）：拉 releases 列表，解析 `<pkg>@vX.Y.Z` 形式的 tag →
+ * `{ pkg, version, tag, tgzUrl, repo }`（tgz 附件 URL 按 DSH release 惯例拼装，
+ * 不逐个请求 release 资产）。
+ * 回退模式（单插件仓库）：releases 无 `<pkg>@` tag 时，读默认分支根
+ * `package.json`，取 name/version → `{ pkg, version, spec: 'github:owner/name', repo }`。
+ *
+ * 返回 { plugins, mode, error }；网络失败 plugins 为空、error 记录原因。
+ */
+export async function discoverRepoPlugins(repo, { fetchFn, now = Date.now() } = {}) {
+  const out = { plugins: [], mode: 'none', error: null, checkedAt: new Date(now).toISOString() }
+  try {
+    const list = await fetchJson(`${GITHUB_API}/repos/${repo}/releases?per_page=100`, { fetchFn, headers: { accept: 'application/vnd.github+json' } })
+    const tags = (Array.isArray(list) ? list : [])
+      .filter(rel => !rel.draft)
+      .map(rel => String(rel.tag_name || ''))
+      .filter(Boolean)
+
+    const seen = new Map() // pkg -> 最高版本条目
+    for (const tag of tags) {
+      const m = /^([A-Za-z0-9_.-]+)@v?(\d[^\s]*)\.tgz$/.exec(tag)
+      const m2 = m ? null : /^([A-Za-z0-9_.-]+)@v?(\d[^\s]*)$/.exec(tag)
+      const hit = m || m2
+      if (!hit) continue
+      const pkg = hit[1]
+      const version = String(hit[2])
+      const prev = seen.get(pkg)
+      if (!prev || compareVersions(version, prev.version) > 0) {
+        seen.set(pkg, {
+          pkg,
+          version,
+          tag,
+          tgzUrl: `https://github.com/${repo}/releases/download/${encodeURIComponent(tag)}/${pkg}-${version}.tgz`,
+          repo,
+        })
+      }
+    }
+
+    if (seen.size > 0) {
+      out.plugins = [...seen.values()].sort((a, b) => a.pkg.localeCompare(b.pkg))
+      out.mode = 'monorepo'
+      return out
+    }
+
+    // 回退：单插件仓库 —— 默认分支根 package.json
+    const meta = await fetchJson(`${GITHUB_API}/repos/${repo}`, { fetchFn, headers: { accept: 'application/vnd.github+json' } })
+    const branch = meta?.default_branch || 'main'
+    const pj = await fetchJson(`https://raw.githubusercontent.com/${repo}/${encodeURIComponent(branch)}/package.json`, { fetchFn, headers: { accept: 'application/vnd.github.raw' } })
+    const pkg = String(pj?.name || '')
+    const version = String(pj?.version || '')
+    if (pkg && version) {
+      out.plugins = [{ pkg, version, spec: `github:${repo}`, repo, branch }]
+      out.mode = 'single'
+    }
+    return out
+  } catch (error) {
+    out.error = String(error?.message || error)
+    return out
+  }
+}
+
+/**
+ * 刷新全部关注仓库的插件快照，并入状态文件（state.repos）。
+ * 返回 { state, results }；单仓库失败不拖垮整体。
+ */
+export async function refreshRepos(state = readState(), repos = readRepos(), { fetchFn, force = false, now = Date.now() } = {}) {
+  if (!state.repos) state.repos = {}
+  const results = {}
+  for (const entry of repos) {
+    const key = entry.repo
+    const prev = state.repos[key]
+    if (!force && prev?.checkedAt && now - Date.parse(prev.checkedAt) < CHECK_MAX_AGE_MIN * 60_000) {
+      results[key] = { cached: true }
+      continue
+    }
+    try {
+      const found = await discoverRepoPlugins(key, { fetchFn, now })
+      state.repos[key] = { ...found, repo: key }
+      results[key] = { ok: true, plugins: found.plugins.length, mode: found.mode }
+    } catch (error) {
+      results[key] = { error: String(error?.message || error) }
+    }
+  }
+  return { state, results }
+}
+
+// ------------------------------------------------------------------ install
+
+/** 探测 dsh 可执行文件：PATH 优先，回退常见安装目录（Electron 窄 PATH 兜底）。 */
+export function resolveDshBin(env = process.env) {
+  const dirs = (env.PATH || '').split(':').filter(Boolean)
+  for (const dir of [...dirs, '/opt/homebrew/bin', '/usr/local/bin', '/opt/local/bin']) {
+    try {
+      const candidate = join(dir, 'dsh')
+      if (existsSync(candidate)) return candidate
+    } catch { /* 目录不存在 */ }
+  }
+  return null
+}
+
+/**
+ * 一键安装/更新插件：spawn `dsh plugin --profile <p> add <spec>`。
+ *
+ * 注入 spawnFn 便于测试；失败（dsh 不在 PATH / pnpm 报错）返回
+ * `{ ok:false, code, error, stderrTail }`，不抛异常。
+ */
+export function runInstall(profile, spec, { env = process.env, spawn = spawnSync } = {}) {
+  const bin = resolveDshBin(env)
+  if (!bin) return { ok: false, code: -1, error: '未找到 dsh 可执行文件（PATH 与常见目录均无）' }
+  try {
+    const result = spawn(bin, ['plugin', '--profile', profile, 'add', spec], {
+      encoding: 'utf8', timeout: 120_000, stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    const stdout = String(result.stdout || '')
+    const stderr = String(result.stderr || '')
+    const code = result.status ?? (result.error ? -1 : 0)
+    const tail = (stderr + stdout).trim().split('\n').slice(-6).join('\n')
+    if (code !== 0) {
+      return { ok: false, code, error: stderr.trim() || stdout.trim() || `安装失败（exit ${code}）`, stderrTail: tail }
+    }
+    return { ok: true, code, stdout: tail }
+  } catch (error) {
+    return { ok: false, code: -1, error: String(error?.message || error) }
+  }
 }
 
 // --------------------------------------------------------------- net helpers
@@ -550,5 +733,21 @@ export function buildView(home, { state = null, stateFile = statePath(), profile
   }
   /** 可用更新总数（跨 profile 去重计数）。 */
   out.updateCount = out.profiles.reduce((sum, p) => sum + p.plugins.filter(x => x.check?.hasUpdate).length, 0)
+
+  // 关注仓库源 + 插件快照（关联已安装状态）
+  out.repos = (readRepos()).map(entry => {
+    const snap = st.repos?.[entry.repo] || { plugins: [], mode: 'none', checkedAt: null, error: null }
+    const byPkg = {}
+    for (const p of snap.plugins || []) byPkg[p.pkg] = p
+    const installed = {}
+    for (const profile of out.profiles) {
+      for (const info of profile.plugins) {
+        if (!(info.pkg in byPkg)) continue
+        if (!installed[info.pkg]) installed[info.pkg] = []
+        installed[info.pkg].push({ profile: profile.name, version: info.version })
+      }
+    }
+    return { ...entry, ...snap, installed }
+  })
   return out
 }

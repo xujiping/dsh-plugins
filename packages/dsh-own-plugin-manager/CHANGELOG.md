@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.5.0 (2026-09-22)
+
+- **关注仓库源（社区插件浏览 + 一键安装）**：社区插件无官方市场，在社区 Tab 顶部
+  可添加关注的 GitHub 插件仓库（`owner/repo`、`https://github.com/…`、
+  `github:…` 三种写法），自动发现其发布的插件并展示在社区列表。
+  - 发现逻辑 `discoverRepoPlugins`：主模式拉 GitHub releases 解析 `<pkg>@vX.Y.Z`
+    tag（monorepo，如 veildawn/dsh-plugins），tgz URL 按惯例拼装；无匹配回退
+    默认分支根 package.json（单插件仓库）。网络失败记入 error，不抛异常。
+  - 未安装的仓库插件以「仓库 + 未安装」卡片出现在社区 Tab，已安装的走常规卡片
+    （更新检测覆盖）；`buildView` 附带 repos 快照并按包名关联已安装状态
+    （跨 profile），client 零新增 state。
+  - 一键安装/更新 `POST /api/dsh-opm/install`：host 侧 spawn
+    `dsh plugin --profile <p> add <spec>`（monorepo 用 tgz URL、单插件仓库用
+    `github:owner/repo`），成功自动 force 刷新检测；失败透出 pnpm stderr 尾部
+    （如 allowBuilds 提示）。desktop profile 只给「复制安装命令」。
+  - 仓库源 CRUD：`GET /api/dsh-opm/repos`、`POST repos/add|remove|refresh`；
+    配置落盘 `~/.dsh/plugin-repos.json`（`DSH_OPM_REPOS` 可覆盖）；快照入
+    `plugin-versions.json` 随后台定时轮询一起刷新（`DSH_OPM_CHECK_MAX_AGE_MIN`
+    控制单仓库缓存）。
+  - `resolveDshBin`：dsh 可执行文件按 PATH + 常见目录（/opt/homebrew/bin、
+    /usr/local/bin、/opt/local/bin）探测，规避 Electron 窄 PATH。
+- 测试：补仓库源 CRUD / discovery（monorepo tags + 单插件回退 + 网络失败）/
+  refreshRepos 缓存 / buildView 已安装关联 / runInstall（fake spawn 成功失败）/
+  新路由 handler / client 静态与运行时仓库源 UI 断言，全量通过。
+
 ## 0.4.0 (2026-09-22)
 
 - **自有插件（link）也走网络检测远端最新版**：优先 GitHub release 标签

@@ -7,6 +7,11 @@
  *   POST /api/dsh-opm/refresh           { profile?, force? }    — 触发版本检测（默认增量）
  *   POST /api/dsh-opm/toggle            { profile, plugin, disabled } — 启用/停用插件
  *   POST /api/dsh-opm/ack               { profile, plugin }     — link 插件基线对齐（已重启生效）
+ *   GET  /api/dsh-opm/repos             — 关注仓库源列表 + 插件快照（含已安装关联）
+ *   POST /api/dsh-opm/repos/add         { url }                 — 添加仓库源（立即发现一次）
+ *   POST /api/dsh-opm/repos/remove      { repo }                — 移除仓库源
+ *   POST /api/dsh-opm/repos/refresh     { force? }              — 手动重新探测全部仓库源
+ *   POST /api/dsh-opm/install           { profile, spec }       — 一键安装/更新（spawn dsh plugin add）
  *
  * 另有后台定时自动监测：每 DSH_OPM_INTERVAL_MIN（默认 360 分钟）刷新一轮
  * 版本检测并落盘 ~/.dsh/plugin-versions.json；启动时仅当缓存过期才补跑
@@ -17,7 +22,8 @@
 import { readFileSync, writeFileSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  dshHome, statePath, readState, writeState, buildView, refreshAll,
+  dshHome, statePath, reposPath, readState, writeState, buildView, refreshAll,
+  readRepos, writeRepos, addRepo, removeRepo, refreshRepos, runInstall,
   readProfileState, togglePluginInPatchYml, ackLink,
 } from './core.js'
 
@@ -152,6 +158,78 @@ export function apply(ctx) {
           return { ok: true, profile, plugin }
         }),
       }),
+
+      // ------------------------------------------------------- repo sources
+      ctx.webServer.register({
+        kind: 'exact', path: '/api/dsh-opm/repos',
+        handler(req, res) {
+          if (!trusted(req)) return reply(res, 403, { error: '仅允许本机同源请求' })
+          if (req.method !== 'GET') return reply(res, 405, { error: '不支持的请求方法' })
+          try {
+            const state = readState(statePath())
+            const view = buildView(dshHome(), { state })
+            reply(res, 200, { ok: true, repos: view.repos, stateCheckedAt: view.checkedAt })
+          } catch (error) {
+            reply(res, 500, { error: String(error?.message || error) })
+          }
+        },
+      }),
+
+      // ---------------------------------------------------- add repo source
+      ctx.webServer.register({
+        kind: 'exact', path: '/api/dsh-opm/repos/add',
+        handler: post(async parsed => {
+          const url = String(parsed.url ?? '').trim()
+          if (!url) throw new Error('url 必填')
+          const repos = addRepo(url)
+          // 立即发现一次并落盘
+          const state = readState(statePath())
+          const { state: st2 } = await refreshRepos(state, repos, { force: true })
+          writeState(st2, statePath())
+          return { ok: true, repos, view: buildView(dshHome(), { state: st2 }).repos }
+        }),
+      }),
+
+      // -------------------------------------------------- remove repo source
+      ctx.webServer.register({
+        kind: 'exact', path: '/api/dsh-opm/repos/remove',
+        handler: post(parsed => {
+          const repo = String(parsed.repo ?? '').trim()
+          if (!repo) throw new Error('repo 必填')
+          if (!removeRepo(repo)) throw new Error(`仓库源不存在：${repo}`)
+          const state = readState(statePath())
+          if (state.repos) delete state.repos[repo]
+          writeState(state, statePath())
+          return { ok: true, repos: readRepos() }
+        }),
+      }),
+
+      // -------------------------------------------------- refresh repo probes
+      ctx.webServer.register({
+        kind: 'exact', path: '/api/dsh-opm/repos/refresh',
+        handler: post(async parsed => {
+          const state = readState(statePath())
+          const { state: st2 } = await refreshRepos(state, readRepos(), { force: parsed.force === true })
+          writeState(st2, statePath())
+          return { ok: true, repos: buildView(dshHome(), { state: st2 }).repos }
+        }),
+      }),
+
+      // ------------------------------------------------------------- install
+      ctx.webServer.register({
+        kind: 'exact', path: '/api/dsh-opm/install',
+        handler: post(async parsed => {
+          const profile = String(parsed.profile ?? '').trim()
+          const spec = String(parsed.spec ?? '').trim()
+          if (!profile || !spec) throw new Error('profile 与 spec 必填')
+          const result = runInstall(profile, spec)
+          if (!result.ok) return { ok: false, ...result }
+          // 安装成功后 force 刷新检测并落盘
+          const { state } = await refreshAll(dshHome(), { profiles: [profile], force: true })
+          writeState(state, statePath())
+          return { ok: true, ...result, view: buildView(dshHome(), { state }) }
+        }),
+      }),
     ]
 
     // ------------------------------------------------ background auto checks
@@ -162,6 +240,7 @@ export function apply(ctx) {
       const runChecks = async force => {
         try {
           const { state } = await refreshAll(dshHome(), { force })
+          await refreshRepos(state, readRepos(), { force })
           writeState(state, statePath())
         } catch { /* 后台监测失败静默，等下一轮 */ }
       }

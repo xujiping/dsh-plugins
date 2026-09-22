@@ -78,6 +78,19 @@ assert.match(client, /\/api\/dsh-opm\/state/)
 assert.match(client, /\/api\/dsh-opm\/refresh/)
 assert.match(client, /\/api\/dsh-opm\/toggle/)
 assert.match(client, /\/api\/dsh-opm\/ack/)
+assert.match(client, /\/api\/dsh-opm\/repos\/add/)
+assert.match(client, /\/api\/dsh-opm\/repos\/remove/)
+assert.match(client, /\/api\/dsh-opm\/repos\/refresh/)
+assert.match(client, /\/api\/dsh-opm\/install/)
+
+// 8b. 关注仓库源（社区插件浏览/安装）
+assert.match(client, /'关注仓库源'/)
+assert.match(client, /repoSourceCard\(/)
+assert.match(client, /repoPluginCard\(/)
+assert.match(client, /owner\/repo 或 https:\/\/github\.com\/owner\/repo…/)
+assert.match(client, /veildawn\/dsh-plugins/)
+assert.match(client, /'复制安装命令'/)
+assert.match(client, /安装到 \$\{profileTarget\}/)
 
 // 9. legacy sidebar approach fully removed
 assert.doesNotMatch(client, /sidebar\.workspaces/)

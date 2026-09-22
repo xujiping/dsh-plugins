@@ -46,6 +46,11 @@ window.__ModuleLoader__.load({
     const API_REFRESH = '/api/dsh-opm/refresh'
     const API_TOGGLE = '/api/dsh-opm/toggle'
     const API_ACK = '/api/dsh-opm/ack'
+    const API_REPOS = '/api/dsh-opm/repos'
+    const API_REPOS_ADD = '/api/dsh-opm/repos/add'
+    const API_REPOS_REMOVE = '/api/dsh-opm/repos/remove'
+    const API_REPOS_REFRESH = '/api/dsh-opm/repos/refresh'
+    const API_INSTALL = '/api/dsh-opm/install'
     const ROOT = 'opm'
     const SECTION_ID = 'own-plugin-manager'
     const SOURCE_LABEL = { npm: 'npm', github: 'GitHub', link: '本地', tarball: '发布包', other: '其他' }
@@ -258,6 +263,108 @@ window.__ModuleLoader__.load({
       return `dsh plugin --profile ${inst.profile} add ${spec}`
     }
 
+    // ------------------------------------------------------------ repo sources
+    /** 仓库发现的插件的安装 spec：monorepo 用 tgz URL，单插件仓库用 github:。 */
+    function repoPluginSpec(p) {
+      if (p.tgzUrl) return p.tgzUrl
+      if (p.spec) return p.spec
+      return `github:${p.repo}`
+    }
+
+    /** 关注仓库管理卡：输入添加 + 已关注列表（移除）+ 探测刷新。 */
+    function repoSourceCard(repos, onAddRepo, onRemoveRepo, onRefreshRepos, refreshing) {
+      let inputEl = null
+      const submit = event => {
+        const value = (inputEl && inputEl.value || '').trim()
+        if (!value) return
+        onAddRepo(value)
+        if (inputEl) inputEl.value = ''
+      }
+      return el('div', { className: `${ROOT}-repos` },
+        el('div', { className: `${ROOT}-repos-head` },
+          el('div', { className: `${ROOT}-repos-title` },
+            IconGithub({ size: 16 }),
+            el('span', null, '关注仓库源'),
+            el('span', { className: `${ROOT}-repos-hint` }, '社区插件无官方市场，关注 GitHub 插件仓库即可浏览其发布并监测更新')),
+          el('button', {
+            className: `${ROOT}-btn sm`, type: 'button', disabled: refreshing,
+            title: '重新探测全部关注仓库',
+            onClick: event => { event.stopPropagation(); onRefreshRepos() },
+          },
+            IconRefresh({ size: 12, className: refreshing ? `${ROOT}-spin` : '' }),
+            el('span', null, refreshing ? '探测中…' : '重新探测'))),
+        el('div', { className: `${ROOT}-repos-add` },
+          el('input', {
+            type: 'text', placeholder: 'owner/repo 或 https://github.com/owner/repo…',
+            'aria-label': '添加关注仓库',
+            ref: node => { inputEl = node },
+            onKeyDown: event => { if (event.key === 'Enter') submit(event) },
+          }),
+          el('button', {
+            className: `${ROOT}-btn`, type: 'button',
+            onClick: submit,
+          }, '添加')),
+        el('div', { className: `${ROOT}-repos-list` },
+          repos.length === 0
+            ? el('span', { className: `${ROOT}-repos-empty` }, '尚未关注任何仓库，输入 GitHub 仓库地址开始（如 veildawn/dsh-plugins）')
+            : repos.map(r => {
+              const count = (r.plugins || []).length
+              return el('div', { className: `${ROOT}-repo-pill`, key: r.repo },
+                el('a', {
+                  className: `${ROOT}-repo-link`, href: `https://github.com/${r.repo}`, target: '_blank',
+                  rel: 'noopener noreferrer', onClick: event => event.stopPropagation(),
+                }, r.repo),
+                el('span', { className: `${ROOT}-repo-meta` },
+                  r.error
+                    ? el('span', { className: `${ROOT}-err-txt`, title: r.error }, '探测失败')
+                    : (count > 0 ? el('span', null, `${count} 个插件`) : el('span', null, '未发现插件'))),
+                el('button', {
+                  className: `${ROOT}-btn sm`, type: 'button', title: `移除 ${r.repo}`,
+                  onClick: event => { event.stopPropagation(); onRemoveRepo(r.repo) },
+                }, '移除')) })))
+    }
+
+    /** 仓库发现、但未安装的插件卡片。 */
+    function repoPluginCard(p, repo, onInstall, profileTarget) {
+      const spec = repoPluginSpec(p)
+      const installed = repo.installed && repo.installed[p.pkg] ? repo.installed[p.pkg] : null
+      return el('div', { className: `${ROOT}-card repo`, key: `repo:${repo.repo}:${p.pkg}` },
+        el('div', { className: `${ROOT}-card-icon` }, cardIcon(p.pkg)),
+        el('div', { className: `${ROOT}-card-body` },
+          el('div', { className: `${ROOT}-card-head` },
+            el('div', { className: `${ROOT}-card-title-row` },
+              el('h3', { className: `${ROOT}-card-title`, title: p.pkg }, p.pkg),
+              el('span', { className: `${ROOT}-badge repo`, title: `来自 ${repo.repo}` }, '仓库'),
+              el('span', { className: `${ROOT}-badge` }, '未安装'))),
+          el('div', { className: `${ROOT}-version-row` },
+            el('span', { className: `${ROOT}-ver-cur` }, `v${p.version}`),
+            installed ? el('span', { key: 'arrow', 'aria-hidden': 'true' }, '→') : null,
+            installed ? el('span', { className: `${ROOT}-ver-next`, key: 'inst' }, installed.map(i => `已装 v${i.version}（${i.profile}）`).join(' · ')) : null),
+          el('p', { className: `${ROOT}-card-desc` }, `${repo.repo} 发布的插件${p.branch ? `（${p.branch} 分支）` : ''}，尚未安装到当前 profile 范围`),
+          el('div', { className: `${ROOT}-card-foot` },
+            el('div', { className: `${ROOT}-card-meta` },
+              el('span', { className: `${ROOT}-prof-tag` }, repo.repo),
+              installed ? el('span', { className: `${ROOT}-prof-tag` }, '有安装实例') : null),
+            el('div', { className: `${ROOT}-card-ops` },
+              el('button', {
+                className: `${ROOT}-btn sm`, type: 'button', title: spec,
+                onClick: event => { event.stopPropagation(); void copyText(`dsh plugin --profile ${profileTarget} add ${spec}`) },
+              }, '复制安装命令'),
+              el('button', {
+                className: `${ROOT}-btn sm primary`, type: 'button',
+                title: profileTarget ? `安装到 ${profileTarget}（${spec}）` : '先在上方选择一个 profile 作为安装目标',
+                onClick: event => { event.stopPropagation(); onInstall(p, profileTarget) },
+              }, installed ? '更新' : '安装')))))
+    }
+
+    /** GitHub 图标（仓库源标题用）。 */
+    function IconGithub({ size = 16, className } = {}) {
+      return svgWrap(size, className, [
+        el('path', { d: 'M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4' }),
+        el('path', { d: 'M9 18c-4.51 2-5-2-7-2' }),
+      ])
+    }
+
     // -------------------------------------------------------------- fragments
     function sourceBadge(source) {
       const type = (source && source.type) || 'other'
@@ -452,11 +559,89 @@ window.__ModuleLoader__.load({
         }
       }
 
+      // ------------------------------------------------------------ repo ops
+      /** 重新拉取 state（添加/移除仓库后刷新仓库列表与插件全景）。 */
+      async function reloadState() {
+        try {
+          const data = await apiGet(API_STATE)
+          setView(data)
+          return data
+        } catch (error) {
+          toast(`状态刷新失败：${error.message}`, 'error')
+          return null
+        }
+      }
+
+      async function addRepoSource(url) {
+        try {
+          const data = await apiPost(API_REPOS_ADD, { url })
+          const found = (data.view || []).reduce((n, r) => n + (r.plugins || []).length, 0)
+          toast(`已关注 ${url}，发现 ${found} 个插件`, 'ok')
+          await reloadState()
+        } catch (error) {
+          toast(`添加仓库失败：${error.message}`, 'error')
+        }
+      }
+
+      async function removeRepoSource(repo) {
+        try {
+          await apiPost(API_REPOS_REMOVE, { repo })
+          toast(`已移除仓库源 ${repo}`, 'ok')
+          await reloadState()
+        } catch (error) {
+          toast(`移除仓库失败：${error.message}`, 'error')
+        }
+      }
+
+      async function refreshRepos() {
+        try {
+          const data = await apiPost(API_REPOS_REFRESH, { force: true })
+          const total = (data.repos || []).reduce((n, r) => n + (r.plugins || []).length, 0)
+          toast(`仓库探测完成：共发现 ${total} 个插件`, 'ok')
+          await reloadState()
+        } catch (error) {
+          toast(`仓库探测失败：${error.message}`, 'error')
+        }
+      }
+
+      /** 一键安装/更新仓库发现的插件到目标 profile。 */
+      async function installRepoPlugin(p, repoKey, targetProfile) {
+        if (!targetProfile) {
+          toast('请先在上方 profile 过滤中选择安装目标', 'info')
+          return
+        }
+        const spec = repoPluginSpec(p)
+        toast(`正在安装 ${p.pkg} 到 ${targetProfile}…`, 'info')
+        try {
+          const data = await apiPost(API_INSTALL, { profile: targetProfile, spec })
+          if (data.ok === false) {
+            toast(`安装失败：${data.error || '未知错误'}${data.stderrTail ? `（${data.stderrTail}）` : ''}`, 'error')
+            return
+          }
+          toast(`已安装 ${p.pkg} 到 ${targetProfile}，请重启 dsh web 生效`, 'ok')
+          await reloadState()
+        } catch (error) {
+          toast(`安装失败：${error.message}`, 'error')
+        }
+      }
+
       // ------------------------------------------------------------ derived
       const profilesList = (view && view.profiles) || []
       const cards = aggregate(view, profile)
       const ownCards = cards.filter(c => c.own)
       const commCards = cards.filter(c => !c.own)
+
+      /** 当前 profile 范围内已安装的包名集合（用于仓库插件「未安装」判定）。 */
+      const installedPkgs = new Set(cards.map(c => c.pkg))
+      /** 仓库发现的插件（含已安装关联信息），合并进社区 Tab。 */
+      const repos = (view && view.repos) || []
+      const repoPlugins = []
+      for (const repo of repos) {
+        for (const p of (repo.plugins || [])) {
+          if (installedPkgs.has(p.pkg)) continue // 已安装的走常规卡片（更新检测已覆盖）
+          repoPlugins.push({ p, repo })
+        }
+      }
       const tabCards = (tab === 'own' ? ownCards : commCards)
         .slice()
         .sort((a, b) => {
@@ -465,24 +650,29 @@ window.__ModuleLoader__.load({
           return (ub - ua) || a.pkg.localeCompare(b.pkg)
         })
       const updatesTotal = cards.filter(c => c.instances.some(i => i.info.check && i.info.check.hasUpdate)).length
+      /** 社区 Tab 展示卡片：已安装社区插件 + 仓库发现的未安装插件。 */
+      const commTabCards = tab === 'community' ? [...tabCards, ...repoPlugins.map(rp => rp.p).sort((a, b) => a.pkg.localeCompare(b.pkg))] : tabCards
+      const communityTotal = tab === 'community' ? commCards.length + repoPlugins.length : 0
 
       const statusPred = card => {
-        if (status === 'on') return card.instances.some(i => !i.info.disabled)
-        if (status === 'off') return card.instances.every(i => i.info.disabled)
-        if (status === 'upd') return card.instances.some(i => i.info.check && i.info.check.hasUpdate)
+        const instances = card.instances || []
+        if (status === 'on') return instances.some(i => !i.info.disabled)
+        if (status === 'off') return instances.length > 0 && instances.every(i => i.info.disabled)
+        if (status === 'upd') return instances.some(i => i.info.check && i.info.check.hasUpdate)
         return true
       }
       const q = query.trim().toLowerCase()
-      const matchQ = card => !q || [card.pkg, card.description, card.source.spec || '', card.source.path || '']
+      const matchQ = card => !q || [card.pkg, card.description, card.source?.spec || '', card.source?.path || '']
         .join(' ').toLowerCase().includes(q)
 
-      const count = { all: tabCards.length, on: 0, off: 0, upd: 0 }
-      for (const card of tabCards) {
-        if (card.instances.some(i => !i.info.disabled)) count.on += 1
-        if (card.instances.every(i => i.info.disabled)) count.off += 1
-        if (card.instances.some(i => i.info.check && i.info.check.hasUpdate)) count.upd += 1
+      const count = { all: commTabCards.length, on: 0, off: 0, upd: 0 }
+      for (const card of commTabCards) {
+        const instances = card.instances || []
+        if (instances.some(i => !i.info.disabled)) count.on += 1
+        if (instances.length > 0 && instances.every(i => i.info.disabled)) count.off += 1
+        if (instances.some(i => i.info.check && i.info.check.hasUpdate)) count.upd += 1
       }
-      const filtered = tabCards.filter(card => statusPred(card) && matchQ(card))
+      const filtered = commTabCards.filter(card => statusPred(card) && matchQ(card))
 
       // ------------------------------------------------------------- render
       return el('div', { className: `${ROOT}-container` },
@@ -530,7 +720,7 @@ window.__ModuleLoader__.load({
           el('button', {
             className: `${ROOT}-tab`, type: 'button', 'data-on': String(tab === 'community'),
             onClick: () => setTab('community'),
-          }, '社区插件 ', el('span', { className: `${ROOT}-tab-n` }, `(${commCards.length})`))),
+          }, '社区插件 ', el('span', { className: `${ROOT}-tab-n` }, `(${communityTotal})`))),
         // 分段筛选 + 搜索
         el('div', { className: `${ROOT}-filter-bar` },
           el('div', { className: `${ROOT}-seg` },
@@ -551,17 +741,25 @@ window.__ModuleLoader__.load({
               className: `${ROOT}-search-clear`, type: 'button', title: '清空搜索',
               onClick: () => setQuery(''),
             }, '✕') : null)),
+        // 关注仓库源（仅社区 Tab）
+        tab === 'community' ? repoSourceCard(repos, addRepoSource, removeRepoSource, refreshRepos, false) : null,
         // 卡片网格 / 空态
         el('div', { className: `${ROOT}-grid-wrap` },
           loading
             ? el('div', { className: `${ROOT}-empty` }, '正在加载插件状态…')
             : (view && view.error && profilesList.length === 0)
               ? el('div', { className: `${ROOT}-empty` }, `加载失败：${view.error}`)
-              : tabCards.length === 0
-                ? el('div', { className: `${ROOT}-empty` }, tab === 'own' ? '当前 profile 范围内没有自有插件（link 指 dsh-plugins 的包会归入自有）' : '当前 profile 范围内没有社区插件')
+              : commTabCards.length === 0
+                ? el('div', { className: `${ROOT}-empty` }, tab === 'own' ? '当前 profile 范围内没有自有插件（link 指 dsh-plugins 的包会归入自有）' : '当前 profile 范围内没有社区插件，可在上方关注 GitHub 仓库源浏览社区插件')
                 : filtered.length === 0
                   ? el('div', { className: `${ROOT}-empty` }, '没有匹配的插件，调整筛选或搜索词试试')
-                  : el('div', { className: `${ROOT}-grid` }, ...filtered.map(card => pluginCard(card, togglePlugin, ackCard)))),
+                  : el('div', { className: `${ROOT}-grid` },
+                    ...filtered.map(card => {
+                      if (card.instances) return pluginCard(card, togglePlugin, ackCard)
+                      // 仓库发现的未安装插件卡片
+                      const rp = repoPlugins.find(x => x.p === card)
+                      return repoPluginCard(card, rp ? rp.repo : { repo: '?', installed: {} }, (p, target) => installRepoPlugin(p, rp ? rp.repo.repo : '', target), profile)
+                    }))),
         el('div', { className: `${ROOT}-foot` }, '启停改动在 profile 重载或 GUI 重启后生效；「未接线」= 不在 profile bundles 中，开关暂不可用'),
       )
     }
@@ -802,6 +1000,55 @@ button:has([data-settings-nav-label="${SECTION_ID}"]) > svg:first-child { displa
 }
 .${ROOT}-ver-cur { color: var(--opm-t1); font-weight: 500; font-variant-numeric: tabular-nums; }
 .${ROOT}-ver-next { color: var(--opm-warn); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* 关注仓库源 */
+.${ROOT}-repos {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 12px 14px; border-radius: 10px;
+  background: var(--opm-layer-1); border: 1px solid var(--opm-border-1);
+}
+.${ROOT}-repos-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; flex-wrap: wrap;
+}
+.${ROOT}-repos-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; font-weight: 600; color: var(--opm-t1);
+}
+.${ROOT}-repos-title svg { color: var(--opm-t2); }
+.${ROOT}-repos-hint { font-size: 11px; font-weight: 400; color: var(--opm-t3); }
+.${ROOT}-repos-add { display: flex; align-items: center; gap: 8px; }
+.${ROOT}-repos-add input {
+  box-sizing: border-box; flex: 1; height: 32px;
+  padding: 0 12px; border-radius: 8px;
+  border: 1px solid var(--opm-border-2); background: var(--opm-base);
+  color: var(--opm-t1); outline: none; font-size: 12.5px;
+}
+.${ROOT}-repos-add input:focus {
+  border-color: var(--opm-brand);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--opm-brand) 18%, transparent);
+}
+.${ROOT}-repos-list { display: flex; flex-direction: column; gap: 6px; }
+.${ROOT}-repos-empty { font-size: 12px; color: var(--opm-t3); padding: 4px 0; }
+.${ROOT}-repo-pill {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-radius: 8px;
+  background: var(--opm-base); border: 1px solid var(--opm-border-1);
+}
+.${ROOT}-repo-link {
+  color: var(--opm-brand); font-size: 12.5px; font-weight: 500;
+  text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.${ROOT}-repo-link:hover { text-decoration: underline; }
+.${ROOT}-repo-meta {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-left: auto; font-size: 11px; color: var(--opm-t3);
+  white-space: nowrap;
+}
+.${ROOT}-badge.repo {
+  color: var(--opm-brand);
+  background: color-mix(in srgb, var(--opm-brand) 14%, transparent);
+}
 
 .${ROOT}-card-foot {
   display: flex; align-items: center; justify-content: space-between;
