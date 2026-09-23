@@ -76,6 +76,10 @@ link 类为**双信号**，互不掩盖：
   为只读（Electron 独占 + 手动接线），只提供「复制安装命令」。
 - **定期检测**：仓库快照随后台定时轮询一起刷新（`DSH_OPM_CHECK_MAX_AGE_MIN`
   控制单仓库缓存有效期），也可手动「重新探测」。
+- **管理仓库源**：卡片右上角「管理」打开管理弹窗——集中查看每个仓库的模式
+  （monorepo/单仓库）、插件数、上次探测时间、添加时间与插件清单
+  （`pkg@version` chips），支持**单仓库重新探测**、移除、打开 GitHub，弹窗内
+  也可直接添加新仓库。管理弹窗的「重新探测」只刷当前仓库，不打扰其余仓库。
 
 仓库源配置落盘 `~/.dsh/plugin-repos.json`（`DSH_OPM_REPOS` 可覆盖）。
 
@@ -100,7 +104,7 @@ curl -s -X POST http://127.0.0.1:3080/api/dsh-opm/toggle \
 curl -s -X POST http://127.0.0.1:3080/api/dsh-opm/ack \
   -H 'content-type: application/json' -d '{"profile":"web","plugin":"dsh-web-sites"}'
 
-# 关注仓库源：列表 / 添加 / 移除 / 重新探测
+# 关注仓库源：列表 / 添加 / 移除 / 重新探测（传 repo 只刷单个）
 curl -s http://127.0.0.1:3080/api/dsh-opm/repos | jq '.repos[] | {repo, plugins: [.plugins[].pkg]}'
 curl -s -X POST http://127.0.0.1:3080/api/dsh-opm/repos/add \
   -H 'content-type: application/json' -d '{"url":"veildawn/dsh-plugins"}' | jq
@@ -108,6 +112,8 @@ curl -s -X POST http://127.0.0.1:3080/api/dsh-opm/repos/remove \
   -H 'content-type: application/json' -d '{"repo":"veildawn/dsh-plugins"}'
 curl -s -X POST http://127.0.0.1:3080/api/dsh-opm/repos/refresh \
   -H 'content-type: application/json' -d '{"force":true}' | jq
+curl -s -X POST http://127.0.0.1:3080/api/dsh-opm/repos/refresh \
+  -H 'content-type: application/json' -d '{"force":true,"repo":"veildawn/dsh-plugins"}' | jq
 
 # 一键安装/更新（spec 可以是 tgz URL 或 github:owner/repo）
 curl -s -X POST http://127.0.0.1:3080/api/dsh-opm/install \

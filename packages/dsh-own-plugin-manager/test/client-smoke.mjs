@@ -92,6 +92,18 @@ assert.match(client, /veildawn\/dsh-plugins/)
 assert.match(client, /'复制安装命令'/)
 assert.match(client, /安装到 \$\{profileTarget\}/)
 
+// 8c. 仓库源管理弹窗（单仓库刷新/移除/插件清单/添加）
+assert.match(client, /function repoManagerModal\(/)
+assert.match(client, /'管理仓库源'/)
+assert.match(client, /repoManagerModal\(repos, \{/)
+assert.match(client, /onRefreshRepo: refreshRepos/)
+assert.match(client, /`上次探测 \$\{timeAgo/)
+assert.match(client, /`添加于 \$\{formatDate/)
+assert.match(client, /modal-overlay/)
+assert.match(client, /modal-repo/)
+assert.match(client, /repoPluginSpec\(p\)/)
+assert.match(client, /重新探测/)
+
 // 9. legacy sidebar approach fully removed
 assert.doesNotMatch(client, /sidebar\.workspaces/)
 assert.doesNotMatch(client, /\.dws-menu/)

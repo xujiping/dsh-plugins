@@ -10,7 +10,7 @@
  *   GET  /api/dsh-opm/repos             — 关注仓库源列表 + 插件快照（含已安装关联）
  *   POST /api/dsh-opm/repos/add         { url }                 — 添加仓库源（立即发现一次）
  *   POST /api/dsh-opm/repos/remove      { repo }                — 移除仓库源
- *   POST /api/dsh-opm/repos/refresh     { force? }              — 手动重新探测全部仓库源
+ *   POST /api/dsh-opm/repos/refresh     { force?, repo? }        — 手动重新探测仓库源（传 repo 单仓库刷新）
  *   POST /api/dsh-opm/install           { profile, spec }       — 一键安装/更新（spawn dsh plugin add）
  *
  * 另有后台定时自动监测：每 DSH_OPM_INTERVAL_MIN（默认 360 分钟）刷新一轮
@@ -208,8 +208,11 @@ export function apply(ctx) {
       ctx.webServer.register({
         kind: 'exact', path: '/api/dsh-opm/repos/refresh',
         handler: post(async parsed => {
+          const repo = String(parsed.repo ?? '').trim()
+          const repos = readRepos()
+          if (repo && !repos.some(r => r.repo === repo)) throw new Error(`仓库源不存在：${repo}`)
           const state = readState(statePath())
-          const { state: st2 } = await refreshRepos(state, readRepos(), { force: parsed.force === true })
+          const { state: st2 } = await refreshRepos(state, repos, { force: parsed.force === true, only: repo || null })
           writeState(st2, statePath())
           return { ok: true, repos: buildView(dshHome(), { state: st2 }).repos }
         }),

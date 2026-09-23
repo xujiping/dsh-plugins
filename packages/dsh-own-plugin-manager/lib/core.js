@@ -385,14 +385,16 @@ export async function discoverRepoPlugins(repo, { fetchFn, now = Date.now() } = 
 }
 
 /**
- * 刷新全部关注仓库的插件快照，并入状态文件（state.repos）。
+ * 刷新关注仓库的插件快照，并入状态文件（state.repos）。
+ * 传 only 时只刷指定仓库（单仓库刷新），其余仓库快照原样保留。
  * 返回 { state, results }；单仓库失败不拖垮整体。
  */
-export async function refreshRepos(state = readState(), repos = readRepos(), { fetchFn, force = false, now = Date.now() } = {}) {
+export async function refreshRepos(state = readState(), repos = readRepos(), { fetchFn, force = false, now = Date.now(), only = null } = {}) {
   if (!state.repos) state.repos = {}
   const results = {}
   for (const entry of repos) {
     const key = entry.repo
+    if (only && key !== only) continue
     const prev = state.repos[key]
     if (!force && prev?.checkedAt && now - Date.parse(prev.checkedAt) < CHECK_MAX_AGE_MIN * 60_000) {
       results[key] = { cached: true }

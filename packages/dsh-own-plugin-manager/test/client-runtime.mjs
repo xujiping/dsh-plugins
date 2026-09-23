@@ -13,7 +13,7 @@
  *      - 空态渲染无异常。
  *
  * 注意：组件 hooks 顺序为 [view, profile, tab, status, query, loading,
- * refreshing]（client.js 中有注释锚定），本测试按该顺序注入状态。
+ * refreshing, repoModal]（client.js 中有注释锚定），本测试按该顺序注入状态。
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -227,6 +227,22 @@ const repoCards = byClass(tree, 'opm-card').concat(byClass(tree, 'opm-card repo'
 assert.ok(repoCards.some(c => texts(c).join('|').includes('dsh-remote-plugin')), 'repo-discovered card shown')
 // 仓库源管理卡存在
 assert.ok(byClass(tree, 'opm-repos').length >= 1, 'repo source card rendered')
+// 「管理」入口存在
+assert.match(texts(tree).join('|'), /管理/)
+
+// 5d3. 仓库源管理弹窗（hooks 末尾 repoModal = true）
+hookStates[7] = true
+tree = render(reg.comp())
+assert.match(texts(tree).join('|'), /管理仓库源/)
+assert.match(texts(tree).join('|'), /共 1 个关注仓库/)
+assert.match(texts(tree).join('|'), /monorepo/)
+assert.match(texts(tree).join('|'), /上次探测/)
+assert.match(texts(tree).join('|'), /添加于/)
+assert.match(texts(tree).join('|'), /dsh-remote-plugin@0\.9\.0/)
+assert.match(texts(tree).join('|'), /关闭/)
+hookStates[7] = false
+tree = render(reg.comp())
+assert.equal(byClass(tree, 'opm-modal').length, 0, 'modal hidden by default')
 
 // 5e. profile 过滤 web + 自有 Tab + 「已停用」→ 空（web 里自研包启用中）
 hookStates[1] = 'web'

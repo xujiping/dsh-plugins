@@ -168,6 +168,14 @@ import { apply, trusted } from '../lib/index.js'
   assert.equal(called, false)
   assert.equal(st3.repos['veildawn/dsh-plugins'].plugins.length, 2)
 
+  // only：只刷指定仓库，其余保留（单仓库刷新）
+  const stA = { profiles: {}, repos: { 'veildawn/dsh-plugins': { plugins: [{ pkg: 'a', version: '1.0.0' }], mode: 'monorepo', checkedAt: 'old' }, 'other/repo': { plugins: [], mode: 'none', checkedAt: 'keep' } } }
+  const reposA = [{ repo: 'veildawn/dsh-plugins' }, { repo: 'other/repo' }]
+  const { state: stA2 } = await refreshRepos(stA, reposA, { fetchFn, now: 2000, only: 'veildawn/dsh-plugins' })
+  assert.equal(stA2.repos['veildawn/dsh-plugins'].plugins.length, 2, 'only target refreshed')
+  assert.equal(stA2.repos['other/repo'].checkedAt, 'keep', 'untouched repo preserved')
+  assert.equal(stA2.repos['other/repo'].plugins.length, 0, 'untouched repo snapshot preserved')
+
   // buildView 附带 repos（关联已安装）
   const home2 = mkdtempSync(join(tmpdir(), 'opm-home-'))
   const repoFile2 = join(home2, 'repos.json')
@@ -716,6 +724,10 @@ async function callHandler(handler, { method = 'GET', body = null, address = '12
   // repos/remove：不存在 -> 400
   const reposRmBad = await callHandler(routes.get('/api/dsh-opm/repos/remove'), { method: 'POST', body: { repo: 'nope/nope' } })
   assert.equal(reposRmBad.status, 400)
+
+  // repos/refresh：单仓库不存在 -> 400
+  const reposRefBad = await callHandler(routes.get('/api/dsh-opm/repos/refresh'), { method: 'POST', body: { repo: 'nope/nope', force: true } })
+  assert.equal(reposRefBad.status, 400)
 
   // install 路由：desktop 之外的 profile 若 spawn 失败（无 dsh bin / 测试环境）也应回 200 且 ok:false
   const installRes = await callHandler(routes.get('/api/dsh-opm/install'), { method: 'POST', body: { profile: 'web', spec: 'dsh-ai-proxy@0.3.4' } })

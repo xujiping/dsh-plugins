@@ -69,6 +69,15 @@ window.__ModuleLoader__.load({
       return `${Math.floor(hours / 24)} 天前`
     }
 
+    /** 短日期：2026-09-22。 */
+    function formatDate(iso) {
+      if (!iso) return '—'
+      const d = new Date(iso)
+      if (Number.isNaN(d.getTime())) return '—'
+      const pad = n => String(n).padStart(2, '0')
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    }
+
     // toast（React 树外的 body 级元素，避免每分区重复渲染）
     let toastEl = null
     let toastTimer = null
@@ -271,8 +280,8 @@ window.__ModuleLoader__.load({
       return `github:${p.repo}`
     }
 
-    /** 关注仓库管理卡：输入添加 + 已关注列表（移除）+ 探测刷新。 */
-    function repoSourceCard(repos, onAddRepo, onRemoveRepo, onRefreshRepos, refreshing) {
+    /** 关注仓库管理卡：输入添加 + 已关注列表（移除）+ 探测刷新 + 管理弹窗入口。 */
+    function repoSourceCard(repos, onAddRepo, onRemoveRepo, onRefreshRepos, refreshing, onManage) {
       let inputEl = null
       const submit = event => {
         const value = (inputEl && inputEl.value || '').trim()
@@ -286,13 +295,18 @@ window.__ModuleLoader__.load({
             IconGithub({ size: 16 }),
             el('span', null, '关注仓库源'),
             el('span', { className: `${ROOT}-repos-hint` }, '社区插件无官方市场，关注 GitHub 插件仓库即可浏览其发布并监测更新')),
-          el('button', {
-            className: `${ROOT}-btn sm`, type: 'button', disabled: refreshing,
-            title: '重新探测全部关注仓库',
-            onClick: event => { event.stopPropagation(); onRefreshRepos() },
-          },
-            IconRefresh({ size: 12, className: refreshing ? `${ROOT}-spin` : '' }),
-            el('span', null, refreshing ? '探测中…' : '重新探测'))),
+          el('div', { className: `${ROOT}-meta-group` },
+            el('button', {
+              className: `${ROOT}-btn sm`, type: 'button', title: '打开仓库源管理弹窗',
+              onClick: event => { event.stopPropagation(); onManage() },
+            }, IconGithub({ size: 12 }), '管理'),
+            el('button', {
+              className: `${ROOT}-btn sm`, type: 'button', disabled: refreshing,
+              title: '重新探测全部关注仓库',
+              onClick: event => { event.stopPropagation(); onRefreshRepos() },
+            },
+              IconRefresh({ size: 12, className: refreshing ? `${ROOT}-spin` : '' }),
+              el('span', null, refreshing ? '探测中…' : '重新探测')))),
         el('div', { className: `${ROOT}-repos-add` },
           el('input', {
             type: 'text', placeholder: 'owner/repo 或 https://github.com/owner/repo…',
@@ -363,6 +377,79 @@ window.__ModuleLoader__.load({
         el('path', { d: 'M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4' }),
         el('path', { d: 'M9 18c-4.51 2-5-2-7-2' }),
       ])
+    }
+
+    /**
+     * 仓库源管理弹窗：仓库状态总览（模式/插件数/探测时间/添加时间/插件清单）
+     * + 单仓库刷新/移除 + 添加。overlay 点击关闭，内部点击不冒泡。
+     */
+    function repoManagerModal(repos, callbacks, refreshing) {
+      let inputEl = null
+      const submit = event => {
+        const value = (inputEl && inputEl.value || '').trim()
+        if (!value) return
+        callbacks.onAddRepo(value)
+        if (inputEl) inputEl.value = ''
+      }
+      return el('div', {
+        className: `${ROOT}-modal-overlay`, role: 'presentation',
+        onClick: event => { if (event.target === event.currentTarget) callbacks.onClose() },
+      },
+        el('div', { className: `${ROOT}-modal`, role: 'dialog', 'aria-label': '管理仓库源', 'aria-modal': 'true' },
+          el('div', { className: `${ROOT}-modal-head` },
+            el('div', { className: `${ROOT}-modal-title` },
+              IconGithub({ size: 16 }),
+              el('span', null, '管理仓库源'),
+              el('span', { className: `${ROOT}-repos-hint` }, `共 ${repos.length} 个关注仓库`)),
+            el('button', {
+              className: `${ROOT}-modal-close`, type: 'button', 'aria-label': '关闭',
+              onClick: event => { event.stopPropagation(); callbacks.onClose() },
+            }, '✕')),
+          el('div', { className: `${ROOT}-repos-add` },
+            el('input', {
+              type: 'text', placeholder: 'owner/repo 或 https://github.com/owner/repo…',
+              'aria-label': '添加关注仓库',
+              ref: node => { inputEl = node },
+              onKeyDown: event => { if (event.key === 'Enter') submit(event) },
+            }),
+            el('button', { className: `${ROOT}-btn`, type: 'button', onClick: submit }, '添加')),
+          el('div', { className: `${ROOT}-modal-list` },
+            repos.length === 0
+              ? el('span', { className: `${ROOT}-repos-empty` }, '尚未关注任何仓库，输入 GitHub 仓库地址开始（如 veildawn/dsh-plugins）')
+              : repos.map(r => {
+                const modeLabel = r.mode === 'monorepo' ? 'monorepo' : r.mode === 'single' ? '单仓库' : '未识别'
+                const modeTitle = r.mode === 'monorepo' ? '发布 <pkg>@vX.Y.Z 标签的插件 monorepo' : r.mode === 'single' ? '根 package.json 单插件仓库' : '尚未成功探测'
+                const plugins = r.plugins || []
+                return el('div', { className: `${ROOT}-modal-repo`, key: r.repo },
+                  el('div', { className: `${ROOT}-modal-repo-top` },
+                    el('a', {
+                      className: `${ROOT}-repo-link`, href: `https://github.com/${r.repo}`, target: '_blank',
+                      rel: 'noopener noreferrer', onClick: event => event.stopPropagation(),
+                    }, r.repo),
+                    el('span', { className: `${ROOT}-badge repo`, title: modeTitle }, modeLabel),
+                    r.error ? el('span', { className: `${ROOT}-err-txt`, title: r.error }, '探测失败') : null),
+                  el('div', { className: `${ROOT}-modal-repo-meta` },
+                    el('span', null, `${plugins.length} 个插件`),
+                    el('span', null, `上次探测 ${timeAgo(r.checkedAt)}`),
+                    el('span', null, `添加于 ${formatDate(r.addedAt)}`)),
+                  plugins.length > 0 ? el('div', { className: `${ROOT}-modal-chips` },
+                    ...plugins.map(p => el('span', {
+                      className: `${ROOT}-chip`, key: p.pkg, title: repoPluginSpec(p),
+                    }, `${p.pkg}@${p.version}`))) : null,
+                  el('div', { className: `${ROOT}-modal-repo-ops` },
+                    el('button', {
+                      className: `${ROOT}-btn sm`, type: 'button', disabled: refreshing,
+                      title: `重新探测 ${r.repo}`,
+                      onClick: event => { event.stopPropagation(); callbacks.onRefreshRepo(r.repo) },
+                    }, IconRefresh({ size: 12, className: refreshing ? `${ROOT}-spin` : '' }), '重新探测'),
+                    el('button', {
+                      className: `${ROOT}-btn sm`, type: 'button', title: `移除 ${r.repo}`,
+                      onClick: event => { event.stopPropagation(); callbacks.onRemoveRepo(r.repo) },
+                    }, '移除')))
+              })),
+          el('div', { className: `${ROOT}-modal-foot` },
+            el('span', { className: `${ROOT}-modal-note` }, '探测失败的仓库可稍后单独重试；已安装插件的更新检测走后台轮询'),
+            el('button', { className: `${ROOT}-btn primary`, type: 'button', onClick: () => callbacks.onClose() }, '关闭'))))
     }
 
     // -------------------------------------------------------------- fragments
@@ -482,7 +569,7 @@ window.__ModuleLoader__.load({
     /** 主分区组件：状态加载 + profile/tab/状态/搜索过滤 + 操作。 */
     function OwnPluginManagerSection() {
       // hooks 顺序（client-runtime.mjs 依赖此顺序做有状态渲染测试）：
-      // [view, profile, tab, status, query, loading, refreshing]
+      // [view, profile, tab, status, query, loading, refreshing, repoModal]
       const [view, setView] = react.useState(null)
       const [profile, setProfile] = react.useState('')
       const [tab, setTab] = react.useState('own')
@@ -490,6 +577,7 @@ window.__ModuleLoader__.load({
       const [query, setQuery] = react.useState('')
       const [loading, setLoading] = react.useState(true)
       const [refreshing, setRefreshing] = react.useState(false)
+      const [repoModal, setRepoModal] = react.useState(false)
 
       react.useEffect(() => {
         let alive = true
@@ -593,11 +681,12 @@ window.__ModuleLoader__.load({
         }
       }
 
-      async function refreshRepos() {
+      /** 重新探测仓库源；传 repo 只刷单个，否则全部。 */
+      async function refreshRepos(repo) {
         try {
-          const data = await apiPost(API_REPOS_REFRESH, { force: true })
-          const total = (data.repos || []).reduce((n, r) => n + (r.plugins || []).length, 0)
-          toast(`仓库探测完成：共发现 ${total} 个插件`, 'ok')
+          const data = await apiPost(API_REPOS_REFRESH, { force: true, repo: repo || null })
+          const found = (data.repos || []).reduce((n, r) => n + (r.plugins || []).length, 0)
+          toast(repo ? `已重新探测 ${repo}，发现 ${found} 个插件` : `仓库探测完成：共发现 ${found} 个插件`, 'ok')
           await reloadState()
         } catch (error) {
           toast(`仓库探测失败：${error.message}`, 'error')
@@ -742,7 +831,14 @@ window.__ModuleLoader__.load({
               onClick: () => setQuery(''),
             }, '✕') : null)),
         // 关注仓库源（仅社区 Tab）
-        tab === 'community' ? repoSourceCard(repos, addRepoSource, removeRepoSource, refreshRepos, false) : null,
+        tab === 'community' ? repoSourceCard(repos, addRepoSource, removeRepoSource, refreshRepos, false, () => setRepoModal(true)) : null,
+        // 仓库源管理弹窗
+        repoModal ? repoManagerModal(repos, {
+          onAddRepo: addRepoSource,
+          onRemoveRepo: removeRepoSource,
+          onRefreshRepo: refreshRepos,
+          onClose: () => setRepoModal(false),
+        }, refreshing) : null,
         // 卡片网格 / 空态
         el('div', { className: `${ROOT}-grid-wrap` },
           loading
@@ -1049,6 +1145,74 @@ button:has([data-settings-nav-label="${SECTION_ID}"]) > svg:first-child { displa
   color: var(--opm-brand);
   background: color-mix(in srgb, var(--opm-brand) 14%, transparent);
 }
+
+/* 仓库源管理弹窗 */
+.${ROOT}-modal-overlay {
+  position: fixed; inset: 0; z-index: 95;
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 64px 16px 24px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-base, #fff) 55%, transparent);
+  backdrop-filter: blur(2px);
+}
+.${ROOT}-modal {
+  box-sizing: border-box; width: 100%; max-width: 640px; max-height: 78vh;
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 16px 18px; border-radius: 12px;
+  background: var(--opm-base);
+  border: 1px solid var(--opm-border-2);
+  box-shadow: var(--dsw-shadow-lv3, 0 12px 32px rgba(0,0,0,0.16));
+  color: var(--opm-t1);
+}
+.${ROOT}-modal-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.${ROOT}-modal-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 14px; font-weight: 600; color: var(--opm-t1);
+}
+.${ROOT}-modal-title svg { color: var(--opm-t2); }
+.${ROOT}-modal-close {
+  all: unset; cursor: pointer; box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 6px;
+  font-size: 13px; line-height: 1; color: var(--opm-t3);
+}
+.${ROOT}-modal-close:hover { background: var(--opm-layer-1); color: var(--opm-t1); }
+.${ROOT}-modal-list {
+  display: flex; flex-direction: column; gap: 8px;
+  overflow-y: auto; padding-right: 2px;
+}
+.${ROOT}-modal-repo {
+  display: flex; flex-direction: column; gap: 7px;
+  padding: 10px 12px; border-radius: 10px;
+  background: var(--opm-layer-1); border: 1px solid var(--opm-border-1);
+}
+.${ROOT}-modal-repo-top {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.${ROOT}-modal-repo-top .${ROOT}-repo-link { max-width: 320px; }
+.${ROOT}-modal-repo-meta {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: 11px; color: var(--opm-t3);
+}
+.${ROOT}-modal-chips {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 5px;
+}
+.${ROOT}-chip {
+  font-size: 11px; padding: 2px 7px; border-radius: 999px;
+  background: var(--opm-base); border: 1px solid var(--opm-border-1);
+  color: var(--opm-t2); font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.${ROOT}-modal-repo-ops {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.${ROOT}-modal-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; flex-wrap: wrap;
+  padding-top: 10px; border-top: 1px solid var(--opm-border-1);
+}
+.${ROOT}-modal-note { font-size: 11px; color: var(--opm-t3); }
 
 .${ROOT}-card-foot {
   display: flex; align-items: center; justify-content: space-between;

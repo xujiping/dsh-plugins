@@ -21,9 +21,16 @@
     控制单仓库缓存）。
   - `resolveDshBin`：dsh 可执行文件按 PATH + 常见目录（/opt/homebrew/bin、
     /usr/local/bin、/opt/local/bin）探测，规避 Electron 窄 PATH。
+  - **仓库源管理弹窗**：社区 Tab「关注仓库源」卡片新增「管理」入口，弹窗内
+    集中管理所有关注仓库——每行展示模式徽标（monorepo/单仓库）、插件数、
+    上次探测时间、添加时间与插件清单（pkg@version chips），支持**单仓库
+    重新探测**（`POST repos/refresh` 传 `repo`，core 侧 `refreshRepos` 新增
+    `only` 参数，其余仓库快照原样保留）、移除、打开 GitHub 与弹窗内添加。
+    弹窗显隐走 hooks 末尾 `repoModal` state（不破坏现有 hooks 顺序约束）。
 - 测试：补仓库源 CRUD / discovery（monorepo tags + 单插件回退 + 网络失败）/
-  refreshRepos 缓存 / buildView 已安装关联 / runInstall（fake spawn 成功失败）/
-  新路由 handler / client 静态与运行时仓库源 UI 断言，全量通过。
+  refreshRepos 缓存 + only 单仓库刷新 / buildView 已安装关联 / runInstall（fake
+  spawn 成功失败）/ 新路由 handler（含 refresh 单仓库 400）/ client 静态与运行时
+  仓库源 UI + 管理弹窗断言，全量通过。
 
 ## 0.4.0 (2026-09-22)
 
