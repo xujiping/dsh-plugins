@@ -1,6 +1,6 @@
 {
   "name": "dsh-chat-scroll-nav",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "DSH 对话右侧快速导航条：在聊天区右缘渲染一条竖向迷你导航（类似手机通讯录快速索引），每个用户/AI 消息一个可点击圆点，点击或拖动即可快速滚动定位到对应消息，当前视口消息高亮并悬浮显示消息摘要。纯 client DOM 注入，热插拔挂载，不改 DSH 源码。",
   "keywords": [
     "deepseek",
@@ -29,6 +29,9 @@
     "./client": "./lib/client.js",
     "./package.json": "./package.json"
   },
+  "scripts": {
+    "test": "node test/smoke.mjs"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -36,7 +39,42 @@
     "client": {
       "inject": [],
       "platform": "web"
+    },
+    "compatibility": {
+      "dsh": ">=0.1.5-rc.2",
+      "dshReleases": {
+        "0.1.2-alpha.2": "unknown",
+        "0.1.2-alpha.3": "unknown",
+        "0.1.2-alpha.4": "unknown",
+        "0.1.2-alpha.5": "unknown",
+        "0.1.2-rc.1": "unknown",
+        "0.1.3-alpha.2": "unknown",
+        "0.1.5-alpha.1": "unknown",
+        "0.1.5-alpha.2": "unknown",
+        "0.1.5-rc.1": "unknown",
+        "0.1.5-rc.2": "compatible",
+        "0.1.5-rc.3": "unknown",
+        "0.1.6-alpha.1": "unknown",
+        "0.1.6-alpha.2": "unknown",
+        "0.1.7-alpha.1": "unknown",
+        "0.1.7-alpha.2": "unknown",
+        "0.1.7-rc.1": "unknown",
+        "0.1.7-rc.2": "unknown",
+        "0.2.0-rc.1": "unknown",
+        "0.2.0-rc.2": "unknown",
+        "0.2.1-alpha.1": "unknown"
+      },
+      "dshOperations": {
+        "0.1.5-rc.2": {
+          "install": "passed",
+          "start": "passed",
+          "uninstall": "passed"
+        }
+      }
     }
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
   },
   "license": "MIT",
   "files": [

@@ -1,6 +1,6 @@
 {
   "name": "dsh-web-sites",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "DSH Web 集中管理自己的网站系统：侧边栏「新会话」下方注入「🌐 我的网站系统」菜单，点击展开站点列表，点击站点在主面板区域以 iframe 面板打开（刷新/新标签/管理/关闭）；打开网站时点左侧会话即收起面板。配置存 ~/.dsh/sites.yaml，支持界面增删改。纯 DOM 注入 + host 路由，不改 DSH 源码。",
   "keywords": [
     "deepseek",
@@ -40,7 +40,42 @@
     "client": {
       "inject": [],
       "platform": "web"
+    },
+    "compatibility": {
+      "dsh": ">=0.1.5-rc.2",
+      "dshReleases": {
+        "0.1.2-alpha.2": "unknown",
+        "0.1.2-alpha.3": "unknown",
+        "0.1.2-alpha.4": "unknown",
+        "0.1.2-alpha.5": "unknown",
+        "0.1.2-rc.1": "unknown",
+        "0.1.3-alpha.2": "unknown",
+        "0.1.5-alpha.1": "unknown",
+        "0.1.5-alpha.2": "unknown",
+        "0.1.5-rc.1": "unknown",
+        "0.1.5-rc.2": "compatible",
+        "0.1.5-rc.3": "unknown",
+        "0.1.6-alpha.1": "unknown",
+        "0.1.6-alpha.2": "unknown",
+        "0.1.7-alpha.1": "unknown",
+        "0.1.7-alpha.2": "unknown",
+        "0.1.7-rc.1": "unknown",
+        "0.1.7-rc.2": "unknown",
+        "0.2.0-rc.1": "unknown",
+        "0.2.0-rc.2": "unknown",
+        "0.2.1-alpha.1": "unknown"
+      },
+      "dshOperations": {
+        "0.1.5-rc.2": {
+          "install": "passed",
+          "start": "passed",
+          "uninstall": "passed"
+        }
+      }
     }
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
   },
   "files": [
     "lib",

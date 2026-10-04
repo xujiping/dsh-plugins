@@ -91,3 +91,10 @@ npm test
 ## 配置
 
 `cordis.patch.yml` 的插件 config 可选字段：`command`、`args`、`tools`、`indexPath`、`securityProfile`、`safeMode`。未配置 `tools` 时使用 `Bash,Read,Glob,Grep,Edit,Write`；如需只读会话，可显式设为 `['Read', 'Glob', 'Grep']`。`safeMode` 默认为 `true`；`args` 不能传 bypass 权限参数，也不能传 `--permission-mode`（它由会话控件管理）。`indexPath` 默认是 `~/.dsh/agent-driver/sessions.json`（旧版 `~/.dsh/cc-agent-driver/sessions.json` 会在启动时自动迁移，旧文件保留），只保存 driver 标识、UUID、版本、安全配置和权限模式，不保存 token 或 Claude 另一个 session ID。
+
+## 兼容性
+
+- **DSH**：`>=0.1.5-rc.2`。`0.1.5-rc.2` 已在真实 web profile 日常使用，并通过一次性 Profile 验收（安装、配置合成、Web GUI 启动 HTTP 200、卸载）；其余已发布版本未逐一验证，逐版本声明（未验证 = `unknown`）与操作证据见 `package.json` → `dsh.compatibility`。
+- **Node.js**：`^22.19.0 || >=24.0.0`（与 DSH 宿主一致，`engines.node`）。
+- **系统**：macOS（Apple Silicon）已验证；其他系统未验证。
+- **Profile**：web（含 desktop 等使用 Web GUI 的 profile）。

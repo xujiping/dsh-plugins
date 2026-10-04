@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-archive",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DSH 一键归档空闲会话：侧边栏每个 workspace 目录行悬停出现「归档空闲会话」按钮，一键归档该项目下超过 N 天未活动的所有会话（默认 3 天，可配置）。纯 client DOM 注入 + 原生 workspace/archiveSession RPC，不改 DSH 源码，归档可恢复。",
   "keywords": [
     "deepseek",
@@ -43,7 +43,42 @@
         "sessions"
       ],
       "platform": "web"
+    },
+    "compatibility": {
+      "dsh": ">=0.1.5-rc.2",
+      "dshReleases": {
+        "0.1.2-alpha.2": "unknown",
+        "0.1.2-alpha.3": "unknown",
+        "0.1.2-alpha.4": "unknown",
+        "0.1.2-alpha.5": "unknown",
+        "0.1.2-rc.1": "unknown",
+        "0.1.3-alpha.2": "unknown",
+        "0.1.5-alpha.1": "unknown",
+        "0.1.5-alpha.2": "unknown",
+        "0.1.5-rc.1": "unknown",
+        "0.1.5-rc.2": "compatible",
+        "0.1.5-rc.3": "unknown",
+        "0.1.6-alpha.1": "unknown",
+        "0.1.6-alpha.2": "unknown",
+        "0.1.7-alpha.1": "unknown",
+        "0.1.7-alpha.2": "unknown",
+        "0.1.7-rc.1": "unknown",
+        "0.1.7-rc.2": "unknown",
+        "0.2.0-rc.1": "unknown",
+        "0.2.0-rc.2": "unknown",
+        "0.2.1-alpha.1": "unknown"
+      },
+      "dshOperations": {
+        "0.1.5-rc.2": {
+          "install": "passed",
+          "start": "passed",
+          "uninstall": "passed"
+        }
+      }
     }
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
   },
   "files": [
     "lib",

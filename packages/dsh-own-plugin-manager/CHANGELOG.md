@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1 (2026-10-04)
+
+- **DSH-Store 上架适配**：`package.json` 新增 `dsh.compatibility`（`dsh` 版本范围 + `dshReleases` 对全部已发布 DSH 版本逐项声明，仅 `0.1.5-rc.2` = compatible，其余 = unknown）、`dshOperations`（`0.1.5-rc.2` 一次性 Profile 安装/启动/卸载全部通过）与 `engines.node`；版本号升至 0.5.1。纯 manifest 变更，无功能改动。
+
 ## 0.5.0 (2026-09-22)
 
 - **关注仓库源（社区插件浏览 + 一键安装）**：社区插件无官方市场，在社区 Tab 顶部
