@@ -1,6 +1,6 @@
 {
   "name": "dsh-chat-scroll-nav",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "DSH 对话右侧快速导航条：在聊天区右缘渲染一条竖向迷你导航（类似手机通讯录快速索引），每个用户/AI 消息一个可点击圆点，点击或拖动即可快速滚动定位到对应消息，当前视口消息高亮并悬浮显示消息摘要。纯 client DOM 注入，热插拔挂载，不改 DSH 源码。",
   "keywords": [
     "deepseek",
@@ -59,13 +59,33 @@
         "0.1.7-alpha.1": "unknown",
         "0.1.7-alpha.2": "unknown",
         "0.1.7-rc.1": "unknown",
-        "0.1.7-rc.2": "unknown",
-        "0.2.0-rc.1": "unknown",
-        "0.2.0-rc.2": "unknown",
-        "0.2.1-alpha.1": "unknown"
+        "0.1.7-rc.2": "compatible",
+        "0.2.0-rc.1": "compatible",
+        "0.2.0-rc.2": "compatible",
+        "0.2.1-alpha.1": "compatible"
       },
       "dshOperations": {
         "0.1.5-rc.2": {
+          "install": "passed",
+          "start": "passed",
+          "uninstall": "passed"
+        },
+        "0.1.7-rc.2": {
+          "install": "passed",
+          "start": "passed",
+          "uninstall": "passed"
+        },
+        "0.2.0-rc.1": {
+          "install": "passed",
+          "start": "passed",
+          "uninstall": "passed"
+        },
+        "0.2.0-rc.2": {
+          "install": "passed",
+          "start": "passed",
+          "uninstall": "passed"
+        },
+        "0.2.1-alpha.1": {
           "install": "passed",
           "start": "passed",
           "uninstall": "passed"

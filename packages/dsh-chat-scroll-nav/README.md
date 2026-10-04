@@ -57,7 +57,7 @@ dsh plugin --profile web add link:~/AiProjects/dsh-plugins/packages/dsh-chat-scr
 
 ## 兼容性
 
-- **DSH**：`>=0.1.5-rc.2`。`0.1.5-rc.2` 已在真实 desktop profile 日常使用，并通过一次性 Profile 验收（安装、配置合成、Web GUI 启动 HTTP 200、卸载）；其余已发布版本未逐一验证，逐版本声明（未验证 = `unknown`）与操作证据见 `package.json` → `dsh.compatibility`。
+- **DSH**：`>=0.1.5-rc.2`。`0.1.5-rc.2` 已在真实 desktop profile 日常使用；一次性 Profile 验收（安装、配置合成、Web GUI 启动 HTTP 200、卸载）在 `0.1.5-rc.2`、`0.1.7-rc.2`、`0.2.0-rc.1`、`0.2.0-rc.2`、`0.2.1-alpha.1` 全部通过；其余已发布版本未逐一验证（`unknown`）。详见 `package.json` → `dsh.compatibility`。
 - **Node.js**：`^22.19.0 || >=24.0.0`（与 DSH 宿主一致，`engines.node`）。
 - **系统**：macOS（Apple Silicon）已验证；其他系统未验证。
 - **Profile**：desktop / web（Web GUI）。

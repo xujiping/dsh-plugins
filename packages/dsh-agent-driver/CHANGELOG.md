@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3 — 2026-10-04
+
+- **兼容性证据扩充**：用临时目录安装的新版 DSH CLI 在一次性 Profile 中完成验收：`0.1.7-rc.2` 安装/配置合成/启动（HTTP 200）/卸载全部通过，`dshReleases` 改为 compatible 并回填 `dshOperations`；`0.2.0-rc.1`、`0.2.0-rc.2`、`0.2.1-alpha.1` 因 `peerDependencies` 限定 `^0.1.0-rc.6` 被 dsh 0.2.x 安装门禁判定 incompatible，`dsh` 范围收窄为 `>=0.1.5-rc.2 <0.2.0`。
+
 ## 0.1.2 — 2026-10-04
 
 - **DSH-Store 预检适配**：`files` 不再把 `test/` 打进发行包（测试不属于运行文件，与本仓库其他插件一致），缩小商城静态审查面。`lib/dsh-runtime.js` 的动态导入保留不变——它是 `link:` 本地开发从 profile `node_modules` 解析 `@deepseek-ai/*` 宿主包的必要回退。
