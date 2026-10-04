@@ -1,6 +1,6 @@
 {
   "name": "dsh-agent-driver",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "DSH 的原生智能体会话驱动：同一 UUID 绑定 DSH 与外部智能体 CLI 会话（当前支持 Claude Code，后续接入 Hermes、OpenClaw 等）。",
   "keywords": ["dsh", "agent-driver", "claude-code", "hermes", "openclaw", "native-session"],
   "author": "xujiping",
@@ -77,6 +77,6 @@
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
-  "files": ["lib", "test", "cordis.patch.yml", "README.md", "CHANGELOG.md", "LICENSE"],
+  "files": ["lib", "cordis.patch.yml", "README.md", "CHANGELOG.md", "LICENSE"],
   "license": "MIT"
 }
