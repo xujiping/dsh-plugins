@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Task board">
+  <rect x="6" y="10" width="16" height="44" rx="4" fill="#4d6bfe"/>
+  <rect x="24" y="10" width="16" height="32" rx="4" fill="#7b8ffb"/>
+  <rect x="42" y="10" width="16" height="40" rx="4" fill="#a9b6fd"/>
+  <rect x="6" y="10" width="16" height="44" rx="4" fill="none" stroke="#ffffff" stroke-opacity="0.25"/>
+</svg>

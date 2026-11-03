@@ -1,0 +1,59 @@
+{
+  "name": "dsh-task-board",
+  "version": "0.1.1",
+  "description": "DSH 任务看板：侧边栏「任务看板」入口 + 右侧主面板五列泳道看板（待规划/待开始/进行中/待审核/已完成），支持新建、编辑、删除、列间拖拽移动、搜索与优先级筛选。数据存 ~/.dsh/board.yaml，纯本地零网络。",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "web",
+    "task",
+    "board",
+    "kanban"
+  ],
+  "author": "xujiping",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xujiping/dsh-plugins.git",
+    "directory": "packages/dsh-task-board"
+  },
+  "homepage": "https://github.com/xujiping/dsh-plugins/tree/main/packages/dsh-task-board",
+  "bugs": {
+    "url": "https://github.com/xujiping/dsh-plugins/issues"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "node test/smoke.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "files": [
+    "lib",
+    "locale/*.json",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "license": "MIT"
+}

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Task Board",
+    "description": "A five-column kanban board in the main panel: create, edit, delete, drag cards between backlog / todo / doing / review / done, with search and priority filters. Cards live in ~/.dsh/board.yaml, fully local."
+  }
+}

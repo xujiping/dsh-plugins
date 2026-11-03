@@ -1,0 +1,12 @@
+# dsh-task-board bundle patch: inserts the plugin into a profile's layer stack.
+# Applied as a profile bundle layer (the `dsh.bundle.patch` manifest field) over
+# dsh-base; activate with `dsh plugin --profile <name> add dsh-task-board` (npm)
+# or the monorepo link path.
+#
+# The host half (exports ".") serves the /api/dsh-board/* card routes backed by
+# ~/.dsh/board.yaml; the `dsh.client` declaration in package.json makes the
+# browser half (exports "./client") load in the web GUI, where it registers the
+# `sidebar.panellist` entry and the matching `main` board panel.
+- insert:
+    - id: task-board
+      name: 'dsh-task-board'
